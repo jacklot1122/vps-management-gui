@@ -92,12 +92,15 @@ def logout():
 # =============================================================================
 
 def ensure_vps_connection():
-    """Ensure we're connected to the VPS, return error message if not"""
+    """Ensure we're connected to the VPS, return JSON error response if not"""
     if ssh_manager.connected:
         return None
     
     if not VPS_HOST:
-        return "VPS not configured. Set VPS_HOST, VPS_USER, and VPS_PASSWORD environment variables."
+        return jsonify({
+            'success': False, 
+            'error': 'VPS not configured. Go to Settings to configure your VPS connection, or set VPS_HOST, VPS_USER, and VPS_PASSWORD environment variables.'
+        })
     
     try:
         ssh_manager.connect(
@@ -108,7 +111,10 @@ def ensure_vps_connection():
         )
         return None
     except Exception as e:
-        return f"Failed to connect to VPS: {str(e)}"
+        return jsonify({
+            'success': False,
+            'error': f'Failed to connect to VPS ({VPS_HOST}): {str(e)}'
+        })
 
 @app.route('/api/vps/status', methods=['GET'])
 @login_required
