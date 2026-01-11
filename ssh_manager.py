@@ -269,22 +269,27 @@ class SSHManager:
         if command:
             logger.debug(f"Adding command to script: {command}")
             # Fix commands with unquoted filenames containing special characters
-            # If it looks like "python filename.py" and filename has special chars, quote it
-            import shlex
-            try:
-                parts = shlex.split(command)
-                # Rebuild with proper quoting
-                quoted_parts = []
-                for part in parts:
-                    if any(c in part for c in ' ()[]{}$&;|<>'):
-                        quoted_parts.append(f'"{part}"')
-                    else:
-                        quoted_parts.append(part)
-                safe_command = ' '.join(quoted_parts)
-                logger.debug(f"Safe command: {safe_command}")
-            except:
-                # If shlex fails, try simple quoting of arguments
+            # Pattern: "python filename.py" or "node script.js" etc where filename may have spaces/parens
+            import re
+            
+            # Match: interpreter + space + filename (which may contain spaces/special chars)
+            # Common patterns: python file.py, python3 file.py, node file.js, bash file.sh
+            match = re.match(r'^(python3?|node|bash|sh|ruby|perl)\s+(.+\.(?:py|js|sh|rb|pl))(\s+.*)?$', command, re.IGNORECASE)
+            if match:
+                interpreter = match.group(1)
+                filename = match.group(2)
+                extra_args = match.group(3) or ''
+                # Quote the filename if it contains special characters
+                if any(c in filename for c in ' ()[]{}$&;|<>\'\"'):
+                    safe_command = f'{interpreter} "{filename}"{extra_args}'
+                else:
+                    safe_command = command
+                logger.debug(f"Pattern matched - safe command: {safe_command}")
+            else:
+                # No pattern match, use command as-is
                 safe_command = command
+                logger.debug(f"No pattern match, using original command")
+            
             script_lines.append(f'echo "Running: {command}"')
             script_lines.append(safe_command)
         
