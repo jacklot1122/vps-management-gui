@@ -20,14 +20,14 @@
                 </button>
             </div>
             <div class="btn-group me-2">
-                <button class="btn btn-sm btn-outline-info" onclick="navigateTo('~/Desktop')" title="Desktop">
-                    <i class="bi bi-display"></i> Desktop
+                <button class="btn btn-sm btn-outline-info" onclick="navigateTo('~')" title="Home">
+                    <i class="bi bi-house-door"></i> Home
                 </button>
-                <button class="btn btn-sm btn-outline-info" onclick="navigateTo('~/Documents')" title="Documents">
-                    <i class="bi bi-file-earmark-text"></i> Documents
+                <button class="btn btn-sm btn-outline-info" onclick="navigateTo('/var/log')" title="Logs">
+                    <i class="bi bi-file-text"></i> Logs
                 </button>
-                <button class="btn btn-sm btn-outline-info" onclick="navigateTo('~/Downloads')" title="Downloads">
-                    <i class="bi bi-download"></i> Downloads
+                <button class="btn btn-sm btn-outline-info" onclick="navigateTo('/tmp')" title="Temp">
+                    <i class="bi bi-folder"></i> /tmp
                 </button>
             </div>
             <div class="flex-grow-1 d-flex">
@@ -213,7 +213,7 @@
         showToast('Download started...', 'info');
     }
 
-    // Start at Desktop by default
-    loadDirectory('~/Desktop');
+    // Start at home directory by default
+    loadDirectory('~');
 </script>
 {% endblock %}
