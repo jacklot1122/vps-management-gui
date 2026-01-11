@@ -174,10 +174,13 @@
     }
 
     async function loadScreens() {
+        console.log('loadScreens called');
         const data = await api('/api/screens');
+        console.log('API response:', data);
         const tbody = document.getElementById('screensList');
         
-        if (data.success && data.screens.length > 0) {
+        if (data.success && data.screens && data.screens.length > 0) {
+            console.log('Rendering', data.screens.length, 'screens');
             tbody.innerHTML = data.screens.map(s => `
                 <tr>
                     <td>${s.pid}</td>
@@ -198,6 +201,7 @@
                 </tr>
             `).join('');
         } else {
+            console.log('No screens or error:', data);
             tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No screen sessions found</td></tr>';
         }
     }
