@@ -32,26 +32,94 @@
 
 <!-- Create Screen Modal -->
 <div class="modal fade" id="createScreenModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Create New Screen Session</h5>
+                <h5 class="modal-title"><i class="bi bi-terminal me-2"></i>Create New Screen Session</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <div class="mb-3">
-                    <label class="form-label">Session Name</label>
-                    <input type="text" class="form-control" id="screenName" placeholder="my_session">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Session Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="screenName" placeholder="my_bot">
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Working Directory</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="screenFolder" placeholder="~/Desktop/my_project">
+                                <button class="btn btn-outline-secondary" type="button" onclick="browseFolder()">
+                                    <i class="bi bi-folder"></i>
+                                </button>
+                            </div>
+                            <small class="text-muted">Folder where the screen will run</small>
+                        </div>
+                    </div>
                 </div>
+                
                 <div class="mb-3">
-                    <label class="form-label">Command (optional)</label>
-                    <input type="text" class="form-control" id="screenCommand" placeholder="e.g., python script.py">
-                    <small class="text-muted">Leave empty to start an empty bash session</small>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="useVenv" checked>
+                        <label class="form-check-label" for="useVenv">
+                            <i class="bi bi-box me-1"></i>Use Virtual Environment
+                        </label>
+                    </div>
+                    <small class="text-muted">Creates .venv if it doesn't exist and activates it</small>
+                </div>
+                
+                <hr>
+                
+                <div class="mb-3">
+                    <label class="form-label">Start Method</label>
+                    <div class="btn-group w-100" role="group">
+                        <input type="radio" class="btn-check" name="startMethod" id="methodCommand" value="command" checked>
+                        <label class="btn btn-outline-primary" for="methodCommand">
+                            <i class="bi bi-terminal me-1"></i>Command
+                        </label>
+                        <input type="radio" class="btn-check" name="startMethod" id="methodUpload" value="upload">
+                        <label class="btn btn-outline-primary" for="methodUpload">
+                            <i class="bi bi-upload me-1"></i>Upload File
+                        </label>
+                        <input type="radio" class="btn-check" name="startMethod" id="methodEmpty" value="empty">
+                        <label class="btn btn-outline-primary" for="methodEmpty">
+                            <i class="bi bi-square me-1"></i>Empty Shell
+                        </label>
+                    </div>
+                </div>
+                
+                <div id="commandSection" class="mb-3">
+                    <label class="form-label">Command</label>
+                    <input type="text" class="form-control" id="screenCommand" placeholder="python bot.py">
+                    <small class="text-muted">Command to run in the screen session</small>
+                </div>
+                
+                <div id="uploadSection" class="mb-3" style="display: none;">
+                    <label class="form-label">Upload Python File</label>
+                    <input type="file" class="form-control" id="uploadFile" accept=".py">
+                    <small class="text-muted">File will be uploaded to the working directory and run</small>
+                    <div class="mt-2">
+                        <label class="form-label">Additional Arguments</label>
+                        <input type="text" class="form-control" id="fileArgs" placeholder="--arg1 value1">
+                    </div>
+                </div>
+                
+                <div id="requirementsSection" class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="installRequirements">
+                        <label class="form-check-label" for="installRequirements">
+                            Install requirements.txt if found
+                        </label>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="createScreen()">Create</button>
+                <button type="button" class="btn btn-primary" onclick="createScreen()">
+                    <i class="bi bi-play-fill me-1"></i>Create & Start
+                </button>
             </div>
         </div>
     </div>
@@ -89,6 +157,22 @@
 <script>
     let currentScreenId = null;
 
+    // Toggle visibility based on start method
+    document.querySelectorAll('input[name="startMethod"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            document.getElementById('commandSection').style.display = this.value === 'command' ? 'block' : 'none';
+            document.getElementById('uploadSection').style.display = this.value === 'upload' ? 'block' : 'none';
+        });
+    });
+
+    function browseFolder() {
+        // Open a prompt for folder path (in a real app, this could be a folder picker modal)
+        const folder = prompt('Enter folder path:', '~/Desktop');
+        if (folder) {
+            document.getElementById('screenFolder').value = folder;
+        }
+    }
+
     async function loadScreens() {
         const data = await api('/api/screens');
         const tbody = document.getElementById('screensList');
@@ -120,18 +204,68 @@
 
     async function createScreen() {
         const name = document.getElementById('screenName').value.trim();
-        const command = document.getElementById('screenCommand').value.trim();
+        if (!name) {
+            showToast('Session name is required', 'error');
+            return;
+        }
+        
+        const folder = document.getElementById('screenFolder').value.trim() || '~';
+        const useVenv = document.getElementById('useVenv').checked;
+        const installRequirements = document.getElementById('installRequirements').checked;
+        const startMethod = document.querySelector('input[name="startMethod"]:checked').value;
+        
+        let command = '';
+        let uploadedFile = null;
+        
+        if (startMethod === 'command') {
+            command = document.getElementById('screenCommand').value.trim();
+        } else if (startMethod === 'upload') {
+            const fileInput = document.getElementById('uploadFile');
+            const args = document.getElementById('fileArgs').value.trim();
+            
+            if (fileInput.files.length > 0) {
+                // Upload file first
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                formData.append('path', folder);
+                
+                const uploadResponse = await fetch('/api/files/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const uploadData = await uploadResponse.json();
+                
+                if (!uploadData.success) {
+                    showToast('Failed to upload file: ' + uploadData.error, 'error');
+                    return;
+                }
+                
+                uploadedFile = uploadData.filename;
+                command = `python ${uploadedFile}${args ? ' ' + args : ''}`;
+            }
+        }
+        // For 'empty' method, command stays empty
         
         const data = await api('/api/screens/create', {
             method: 'POST',
-            body: JSON.stringify({ name, command })
+            body: JSON.stringify({ 
+                name, 
+                command, 
+                folder,
+                use_venv: useVenv,
+                install_requirements: installRequirements
+            })
         });
         
         if (data.success) {
             showToast(data.message, 'success');
             bootstrap.Modal.getInstance(document.getElementById('createScreenModal')).hide();
+            // Reset form
             document.getElementById('screenName').value = '';
             document.getElementById('screenCommand').value = '';
+            document.getElementById('screenFolder').value = '';
+            document.getElementById('uploadFile').value = '';
+            document.getElementById('fileArgs').value = '';
             loadScreens();
         } else {
             showToast(data.error, 'error');

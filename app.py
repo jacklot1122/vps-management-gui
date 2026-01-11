@@ -128,16 +128,58 @@ def get_screens():
 @app.route('/api/screens/create', methods=['POST'])
 @login_required
 def create_screen():
-    """Create a new screen session"""
+    """Create a new screen session with optional venv and folder support"""
     data = request.get_json()
     name = data.get('name', f'session_{datetime.now().strftime("%Y%m%d_%H%M%S")}')
     command = data.get('command', '')
+    folder = data.get('folder', '~')
+    use_venv = data.get('use_venv', False)
+    install_requirements = data.get('install_requirements', False)
+    
+    # Expand ~ to home directory
+    if folder.startswith('~'):
+        folder = os.path.expanduser(folder)
+    
+    # Build the startup script
+    startup_commands = []
+    
+    # Change to the folder
+    startup_commands.append(f'cd "{folder}" || exit 1')
+    
+    if use_venv:
+        # Check if venv exists, if not create it
+        venv_path = os.path.join(folder, '.venv')
+        startup_commands.append(f'''
+if [ ! -d ".venv" ]; then
+    echo "Creating virtual environment..."
+    python3 -m venv .venv
+fi
+echo "Activating virtual environment..."
+source .venv/bin/activate
+''')
+        
+        if install_requirements:
+            startup_commands.append('''
+if [ -f "requirements.txt" ]; then
+    echo "Installing requirements..."
+    pip install -r requirements.txt
+fi
+''')
+    
+    # Add the actual command to run
+    if command:
+        startup_commands.append(f'echo "Running: {command}"')
+        startup_commands.append(command)
+    
+    # Keep the shell alive after command finishes (or if no command)
+    startup_commands.append('exec bash')
+    
+    # Join all commands
+    full_script = '\n'.join(startup_commands)
     
     try:
-        if command:
-            subprocess.Popen(['screen', '-dmS', name, 'bash', '-c', command])
-        else:
-            subprocess.Popen(['screen', '-dmS', name])
+        # Create screen with the startup script
+        subprocess.Popen(['screen', '-dmS', name, 'bash', '-c', full_script])
         return jsonify({'success': True, 'message': f'Screen "{name}" created successfully'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -597,6 +639,46 @@ def download_file():
             return jsonify({'success': False, 'error': 'Cannot download directories'})
         
         return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/files/upload', methods=['POST'])
+@login_required
+def upload_file():
+    """Upload a file to a directory"""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file provided'})
+    
+    file = request.files['file']
+    path = request.form.get('path', '~')
+    
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No file selected'})
+    
+    # Expand ~ to home directory
+    if path.startswith('~'):
+        path = os.path.expanduser(path)
+    
+    # Ensure the directory exists
+    if not os.path.exists(path):
+        try:
+            os.makedirs(path)
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'Could not create directory: {str(e)}'})
+    
+    try:
+        # Secure the filename
+        from werkzeug.utils import secure_filename
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(path, filename)
+        
+        file.save(filepath)
+        return jsonify({
+            'success': True, 
+            'message': f'File uploaded successfully',
+            'filename': filename,
+            'filepath': filepath
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
