@@ -114,6 +114,10 @@
         .table {
             color: var(--text-primary);
             margin-bottom: 0;
+            --bs-table-bg: transparent;
+            --bs-table-striped-bg: rgba(139, 92, 246, 0.05);
+            --bs-table-hover-bg: rgba(139, 92, 246, 0.15);
+            --bs-table-color: var(--text-primary);
         }
         
         .table thead th {
@@ -123,7 +127,7 @@
             text-transform: uppercase;
             font-size: 0.75rem;
             letter-spacing: 0.05em;
-            background-color: rgba(139, 92, 246, 0.05);
+            background-color: rgba(139, 92, 246, 0.1);
         }
         
         .table td, .table th {
@@ -131,10 +135,21 @@
             padding: 0.875rem;
             vertical-align: middle;
             color: var(--text-primary);
+            background-color: transparent;
+        }
+        
+        .table tbody tr {
+            background-color: var(--card-bg);
         }
         
         .table-hover tbody tr:hover {
-            background-color: rgba(139, 92, 246, 0.15);
+            background-color: rgba(139, 92, 246, 0.15) !important;
+            --bs-table-hover-bg: rgba(139, 92, 246, 0.15);
+        }
+        
+        .table-responsive {
+            background-color: var(--card-bg);
+            border-radius: 8px;
         }
         
         .btn-action {
