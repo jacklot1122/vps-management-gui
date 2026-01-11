@@ -12,12 +12,20 @@ import os
 import subprocess
 import psutil
 import secrets
+import logging
 from datetime import datetime
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
 from flask_socketio import SocketIO, emit
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from ssh_manager import ssh_manager, SSHManager
+
+# Set up logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
@@ -93,15 +101,20 @@ def logout():
 
 def ensure_vps_connection():
     """Ensure we're connected to the VPS, return JSON error response if not"""
+    logger.debug(f"ensure_vps_connection called. Connected: {ssh_manager.connected}")
+    
     if ssh_manager.connected:
+        logger.debug("Already connected to VPS")
         return None
     
     if not VPS_HOST:
+        logger.warning("VPS_HOST not configured")
         return jsonify({
             'success': False, 
             'error': 'VPS not configured. Go to Settings to configure your VPS connection, or set VPS_HOST, VPS_USER, and VPS_PASSWORD environment variables.'
         })
     
+    logger.info(f"Attempting to connect to VPS: {VPS_HOST} as {VPS_USER}")
     try:
         ssh_manager.connect(
             host=VPS_HOST,
@@ -109,8 +122,10 @@ def ensure_vps_connection():
             password=VPS_PASSWORD if VPS_PASSWORD else None,
             key_string=VPS_SSH_KEY if VPS_SSH_KEY else None
         )
+        logger.info(f"Successfully connected to VPS: {VPS_HOST}")
         return None
     except Exception as e:
+        logger.error(f"Failed to connect to VPS: {str(e)}", exc_info=True)
         return jsonify({
             'success': False,
             'error': f'Failed to connect to VPS ({VPS_HOST}): {str(e)}'
@@ -228,30 +243,41 @@ def screens():
 @login_required
 def get_screens():
     """Get list of all screen sessions from remote VPS"""
+    logger.debug("GET /api/screens called")
     error = ensure_vps_connection()
     if error:
+        logger.error("VPS connection failed in get_screens")
         return jsonify({'success': False, 'error': error})
     
     try:
         screens = ssh_manager.get_screens()
+        logger.debug(f"Found {len(screens)} screens: {screens}")
         return jsonify({'success': True, 'screens': screens})
     except Exception as e:
+        logger.error(f"Error getting screens: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/screens/create', methods=['POST'])
 @login_required
 def create_screen():
     """Create a new screen session on remote VPS"""
+    logger.info("POST /api/screens/create called")
+    
     error = ensure_vps_connection()
     if error:
+        logger.error("VPS connection failed in create_screen")
         return jsonify({'success': False, 'error': error})
     
     data = request.get_json()
+    logger.debug(f"Request data: {data}")
+    
     name = data.get('name', f'session_{datetime.now().strftime("%Y%m%d_%H%M%S")}')
     command = data.get('command', '')
     folder = data.get('folder', '~')
     use_venv = data.get('use_venv', False)
     install_requirements = data.get('install_requirements', False)
+    
+    logger.info(f"Creating screen: name={name}, command={command}, folder={folder}, use_venv={use_venv}, install_requirements={install_requirements}")
     
     try:
         success = ssh_manager.create_screen(
@@ -261,6 +287,8 @@ def create_screen():
             use_venv=use_venv,
             install_requirements=install_requirements
         )
+        logger.info(f"create_screen returned: {success}")
+        
         if success:
             return jsonify({'success': True, 'message': f'Screen "{name}" created successfully'})
         else:
