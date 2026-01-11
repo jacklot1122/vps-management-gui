@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block title %}File Browser - VPS Manager{% endblock %}
+
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-folder me-2"></i>File Browser</h2>
+
+<div class="card">
+    <div class="card-header">
+        <div class="d-flex align-items-center">
+            <button class="btn btn-sm btn-outline-secondary me-2" onclick="goUp()">
+                <i class="bi bi-arrow-up"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary me-2" onclick="goHome()">
+                <i class="bi bi-house"></i>
+            </button>
+            <input type="text" class="form-control form-control-sm bg-dark text-white" id="currentPath" 
+                   onkeypress="if(event.key==='Enter') navigateTo(this.value)">
+            <button class="btn btn-sm btn-outline-primary ms-2" onclick="navigateTo(document.getElementById('currentPath').value)">
+                <i class="bi bi-arrow-right"></i> Go
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Size</th>
+                        <th>Modified</th>
+                        <th>Permissions</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="fileList">
+                    <tr><td colspan="5" class="text-center">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- View/Edit File Modal -->
+<div class="modal fade" id="fileModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content bg-dark">
+            <div class="modal-header">
+                <h5 class="modal-title" id="fileModalTitle">View File</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <textarea class="form-control bg-dark text-white font-monospace" id="fileContent" 
+                          rows="20" style="font-size: 0.9rem;"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" onclick="saveFile()">
+                    <i class="bi bi-save me-1"></i>Save
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let currentDir = '';
+    let parentDir = '';
+    let editingFile = null;
+
+    async function loadDirectory(path) {
+        const data = await api('/api/files/list', {
+            method: 'POST',
+            body: JSON.stringify({ path: path || '~' })
+        });
+        
+        if (data.success) {
+            currentDir = data.path;
+            parentDir = data.parent;
+            document.getElementById('currentPath').value = currentDir;
+            
+            const tbody = document.getElementById('fileList');
+            if (data.items.length > 0) {
+                tbody.innerHTML = data.items.map(item => `
+                    <tr>
+                        <td>
+                            <span class="file-item" onclick="${item.is_dir ? `loadDirectory('${item.path}')` : `viewFile('${item.path}')`}">
+                                <i class="bi ${item.is_dir ? 'bi-folder-fill text-warning' : 'bi-file-text'} me-2"></i>
+                                ${item.name}
+                            </span>
+                        </td>
+                        <td>${item.is_dir ? '-' : formatBytes(item.size)}</td>
+                        <td>${new Date(item.modified).toLocaleString()}</td>
+                        <td><code>${item.permissions}</code></td>
+                        <td>
+                            ${!item.is_dir ? `
+                                <button class="btn btn-sm btn-outline-info me-1" onclick="viewFile('${item.path}')">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                            ` : ''}
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteItem('${item.path}', ${item.is_dir})">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            } else {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Empty directory</td></tr>';
+            }
+        } else {
+            showToast(data.error, 'error');
+        }
+    }
+
+    function goUp() {
+        if (parentDir && parentDir !== currentDir) {
+            loadDirectory(parentDir);
+        }
+    }
+
+    function goHome() {
+        loadDirectory('~');
+    }
+
+    function navigateTo(path) {
+        loadDirectory(path);
+    }
+
+    async function viewFile(path) {
+        const data = await api('/api/files/read', {
+            method: 'POST',
+            body: JSON.stringify({ path })
+        });
+        
+        if (data.success) {
+            editingFile = path;
+            document.getElementById('fileModalTitle').textContent = path.split('/').pop();
+            document.getElementById('fileContent').value = data.content;
+            new bootstrap.Modal(document.getElementById('fileModal')).show();
+        } else {
+            showToast(data.error, 'error');
+        }
+    }
+
+    async function saveFile() {
+        if (!editingFile) return;
+        
+        const content = document.getElementById('fileContent').value;
+        const data = await api('/api/files/write', {
+            method: 'POST',
+            body: JSON.stringify({ path: editingFile, content })
+        });
+        
+        if (data.success) {
+            showToast('File saved successfully', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('fileModal')).hide();
+        } else {
+            showToast(data.error, 'error');
+        }
+    }
+
+    async function deleteItem(path, isDir) {
+        const type = isDir ? 'directory' : 'file';
+        if (!confirm(`Are you sure you want to delete this ${type}?`)) return;
+        
+        const data = await api('/api/files/delete', {
+            method: 'POST',
+            body: JSON.stringify({ path })
+        });
+        
+        if (data.success) {
+            showToast(data.message, 'success');
+            loadDirectory(currentDir);
+        } else {
+            showToast(data.error, 'error');
+        }
+    }
+
+    loadDirectory('~');
+</script>
+{% endblock %}

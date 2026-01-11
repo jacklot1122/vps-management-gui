@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}Log Viewer - VPS Manager{% endblock %}
+
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-file-text me-2"></i>Log Viewer</h2>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-folder me-2"></i>Log Files
+            </div>
+            <div class="card-body" style="max-height: 600px; overflow-y: auto;">
+                <div id="logFilesList">Loading...</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-file-text me-2"></i>Log Content: <span id="currentLogName">Select a log file</span></span>
+                <div>
+                    <select class="form-select form-select-sm d-inline-block w-auto" id="lineCount">
+                        <option value="50">Last 50 lines</option>
+                        <option value="100" selected>Last 100 lines</option>
+                        <option value="200">Last 200 lines</option>
+                        <option value="500">Last 500 lines</option>
+                        <option value="1000">Last 1000 lines</option>
+                    </select>
+                    <button class="btn btn-sm btn-outline-info ms-2" onclick="refreshLog()">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="log-viewer" id="logContent">Select a log file to view its contents</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let currentLogPath = null;
+
+    async function loadLogFiles() {
+        const data = await api('/api/logs');
+        const container = document.getElementById('logFilesList');
+        
+        if (data.success && data.logs.length > 0) {
+            // Group by directory
+            const grouped = {};
+            data.logs.forEach(log => {
+                const dir = log.path.substring(0, log.path.lastIndexOf('/'));
+                if (!grouped[dir]) grouped[dir] = [];
+                grouped[dir].push(log);
+            });
+            
+            let html = '';
+            for (const [dir, logs] of Object.entries(grouped)) {
+                html += `<div class="mb-3">
+                    <strong class="text-muted small">${dir}</strong>
+                    <div class="mt-1">`;
+                logs.forEach(log => {
+                    html += `<div class="file-item" onclick="loadLog('${log.path}', '${log.name}')">
+                        <i class="bi bi-file-text me-2"></i>${log.name}
+                        <small class="text-muted ms-2">${formatBytes(log.size)}</small>
+                    </div>`;
+                });
+                html += '</div></div>';
+            }
+            container.innerHTML = html;
+        } else {
+            container.innerHTML = '<p class="text-muted">No log files found</p>';
+        }
+    }
+
+    async function loadLog(path, name) {
+        currentLogPath = path;
+        document.getElementById('currentLogName').textContent = name;
+        
+        const lines = document.getElementById('lineCount').value;
+        const data = await api('/api/logs/read', {
+            method: 'POST',
+            body: JSON.stringify({ path, lines: parseInt(lines) })
+        });
+        
+        const content = document.getElementById('logContent');
+        if (data.success) {
+            content.textContent = data.content || '(Empty file)';
+            content.scrollTop = content.scrollHeight;
+        } else {
+            content.textContent = 'Error: ' + data.error;
+        }
+    }
+
+    function refreshLog() {
+        if (currentLogPath) {
+            loadLog(currentLogPath, document.getElementById('currentLogName').textContent);
+        }
+    }
+
+    document.getElementById('lineCount').addEventListener('change', refreshLog);
+
+    loadLogFiles();
+</script>
+{% endblock %}

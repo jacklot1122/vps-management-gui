@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - VPS Manager{% endblock %}
+
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-speedometer2 me-2"></i>Dashboard</h2>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card stat-card">
+            <div class="stat-value" id="cpuPercent">--</div>
+            <div class="stat-label">CPU Usage</div>
+            <div class="progress mt-2">
+                <div class="progress-bar" id="cpuBar" role="progressbar" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stat-card">
+            <div class="stat-value" id="memPercent">--</div>
+            <div class="stat-label">Memory Usage</div>
+            <div class="progress mt-2">
+                <div class="progress-bar bg-success" id="memBar" role="progressbar" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stat-card">
+            <div class="stat-value" id="diskPercent">--</div>
+            <div class="stat-label">Disk Usage</div>
+            <div class="progress mt-2">
+                <div class="progress-bar bg-warning" id="diskBar" role="progressbar" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stat-card">
+            <div class="stat-value" id="uptime">--</div>
+            <div class="stat-label">Uptime</div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-terminal me-2"></i>Active Screen Sessions
+            </div>
+            <div class="card-body">
+                <div id="screensList">Loading...</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-info-circle me-2"></i>System Information
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td>CPU Cores</td>
+                        <td id="cpuCores">--</td>
+                    </tr>
+                    <tr>
+                        <td>Load Average</td>
+                        <td id="loadAvg">--</td>
+                    </tr>
+                    <tr>
+                        <td>Total Memory</td>
+                        <td id="memTotal">--</td>
+                    </tr>
+                    <tr>
+                        <td>Total Disk</td>
+                        <td id="diskTotal">--</td>
+                    </tr>
+                    <tr>
+                        <td>Running Processes</td>
+                        <td id="processCount">--</td>
+                    </tr>
+                    <tr>
+                        <td>Network Received</td>
+                        <td id="netRecv">--</td>
+                    </tr>
+                    <tr>
+                        <td>Network Sent</td>
+                        <td id="netSent">--</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-lightning me-2"></i>Quick Actions
+            </div>
+            <div class="card-body">
+                <a href="{{ url_for('screens') }}" class="btn btn-outline-primary me-2">
+                    <i class="bi bi-terminal me-1"></i>Manage Screens
+                </a>
+                <a href="{{ url_for('logs') }}" class="btn btn-outline-info me-2">
+                    <i class="bi bi-file-text me-1"></i>View Logs
+                </a>
+                <a href="{{ url_for('system') }}" class="btn btn-outline-warning me-2">
+                    <i class="bi bi-cpu me-1"></i>System Monitor
+                </a>
+                <a href="{{ url_for('files') }}" class="btn btn-outline-success me-2">
+                    <i class="bi bi-folder me-1"></i>File Browser
+                </a>
+                <a href="{{ url_for('terminal') }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-terminal-fill me-1"></i>Terminal
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function loadStats() {
+        const data = await api('/api/system/stats');
+        if (data.success) {
+            const stats = data.stats;
+            
+            // CPU
+            document.getElementById('cpuPercent').textContent = stats.cpu.percent + '%';
+            document.getElementById('cpuBar').style.width = stats.cpu.percent + '%';
+            document.getElementById('cpuCores').textContent = stats.cpu.count;
+            document.getElementById('loadAvg').textContent = stats.cpu.load_avg.map(v => v.toFixed(2)).join(', ');
+            
+            // Memory
+            document.getElementById('memPercent').textContent = stats.memory.percent + '%';
+            document.getElementById('memBar').style.width = stats.memory.percent + '%';
+            document.getElementById('memTotal').textContent = formatBytes(stats.memory.total);
+            
+            // Disk
+            document.getElementById('diskPercent').textContent = stats.disk.percent + '%';
+            document.getElementById('diskBar').style.width = stats.disk.percent + '%';
+            document.getElementById('diskTotal').textContent = formatBytes(stats.disk.total);
+            
+            // Other
+            document.getElementById('uptime').textContent = stats.uptime;
+            document.getElementById('processCount').textContent = stats.process_count;
+            document.getElementById('netRecv').textContent = formatBytes(stats.network.bytes_recv);
+            document.getElementById('netSent').textContent = formatBytes(stats.network.bytes_sent);
+        }
+    }
+
+    async function loadScreens() {
+        const data = await api('/api/screens');
+        const container = document.getElementById('screensList');
+        
+        if (data.success && data.screens.length > 0) {
+            container.innerHTML = data.screens.map(s => `
+                <div class="d-flex justify-content-between align-items-center mb-2 p-2 bg-dark rounded">
+                    <span>
+                        <i class="bi bi-terminal me-2"></i>
+                        <strong>${s.name}</strong>
+                        <span class="badge ${s.status === 'Attached' ? 'bg-success' : 'bg-secondary'} ms-2">
+                            ${s.status}
+                        </span>
+                    </span>
+                    <span class="text-muted">PID: ${s.pid}</span>
+                </div>
+            `).join('');
+        } else {
+            container.innerHTML = '<p class="text-muted mb-0">No active screen sessions</p>';
+        }
+    }
+
+    // Initial load
+    loadStats();
+    loadScreens();
+
+    // Refresh every 5 seconds
+    setInterval(loadStats, 5000);
+    setInterval(loadScreens, 10000);
+</script>
+{% endblock %}

@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Terminal - VPS Manager{% endblock %}
+
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-terminal-fill me-2"></i>Terminal</h2>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Command Execution</span>
+        <button class="btn btn-sm btn-outline-danger" onclick="clearOutput()">
+            <i class="bi bi-trash me-1"></i>Clear
+        </button>
+    </div>
+    <div class="card-body">
+        <div class="terminal-output mb-3" id="terminalOutput">Welcome to VPS Manager Terminal
+Type a command and press Enter to execute.
+
+$ </div>
+        <div class="input-group">
+            <span class="input-group-text bg-dark text-success border-secondary">$</span>
+            <input type="text" class="form-control bg-dark text-white border-secondary" 
+                   id="commandInput" placeholder="Enter command..." autocomplete="off">
+            <button class="btn btn-primary" onclick="executeCommand()">
+                <i class="bi bi-play-fill me-1"></i>Execute
+            </button>
+        </div>
+        <small class="text-muted mt-2 d-block">
+            <i class="bi bi-info-circle me-1"></i>
+            Commands timeout after 30 seconds. Some dangerous commands are blocked for security.
+        </small>
+    </div>
+</div>
+
+<div class="card mt-4">
+    <div class="card-header">
+        <i class="bi bi-clock-history me-2"></i>Command History
+    </div>
+    <div class="card-body">
+        <div id="commandHistory" class="small">
+            <p class="text-muted mb-0">No commands executed yet</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const commandHistory = [];
+    let historyIndex = -1;
+
+    async function executeCommand() {
+        const input = document.getElementById('commandInput');
+        const command = input.value.trim();
+        if (!command) return;
+
+        const output = document.getElementById('terminalOutput');
+        output.textContent += command + '\n';
+        
+        commandHistory.unshift(command);
+        historyIndex = -1;
+        updateHistory();
+        
+        input.value = '';
+        input.disabled = true;
+
+        const data = await api('/api/execute', {
+            method: 'POST',
+            body: JSON.stringify({ command })
+        });
+
+        if (data.success) {
+            if (data.stdout) output.textContent += data.stdout;
+            if (data.stderr) output.textContent += '\x1b[31m' + data.stderr + '\x1b[0m';
+            if (data.returncode !== 0) {
+                output.textContent += `\n[Exit code: ${data.returncode}]\n`;
+            }
+        } else {
+            output.textContent += `Error: ${data.error}\n`;
+        }
+
+        output.textContent += '\n$ ';
+        output.scrollTop = output.scrollHeight;
+        input.disabled = false;
+        input.focus();
+    }
+
+    function clearOutput() {
+        document.getElementById('terminalOutput').textContent = '$ ';
+    }
+
+    function updateHistory() {
+        const container = document.getElementById('commandHistory');
+        if (commandHistory.length > 0) {
+            container.innerHTML = commandHistory.slice(0, 20).map((cmd, i) => `
+                <div class="d-flex justify-content-between align-items-center py-1 border-bottom border-secondary">
+                    <code class="text-info">${cmd}</code>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="rerunCommand('${cmd.replace(/'/g, "\\'")}')">
+                        <i class="bi bi-arrow-repeat"></i>
+                    </button>
+                </div>
+            `).join('');
+        }
+    }
+
+    function rerunCommand(cmd) {
+        document.getElementById('commandInput').value = cmd;
+        executeCommand();
+    }
+
+    // Keyboard navigation
+    document.getElementById('commandInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            executeCommand();
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (historyIndex < commandHistory.length - 1) {
+                historyIndex++;
+                document.getElementById('commandInput').value = commandHistory[historyIndex];
+            }
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (historyIndex > 0) {
+                historyIndex--;
+                document.getElementById('commandInput').value = commandHistory[historyIndex];
+            } else {
+                historyIndex = -1;
+                document.getElementById('commandInput').value = '';
+            }
+        }
+    });
+
+    document.getElementById('commandInput').focus();
+</script>
+{% endblock %}

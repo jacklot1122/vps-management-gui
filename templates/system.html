@@ -1,0 +1,490 @@
+{% extends "base.html" %}
+
+{% block title %}System Monitor - VPS Manager{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stat-card-modern {
+        padding: 1.5rem;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stat-card-modern .stat-icon {
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        font-size: 5rem;
+        opacity: 0.1;
+    }
+    
+    .stat-card-modern .stat-value {
+        font-size: 3rem;
+        font-weight: 700;
+        line-height: 1;
+        margin-bottom: 0.5rem;
+    }
+    
+    .stat-card-modern .stat-label {
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+    }
+    
+    .stat-card-modern.cpu .stat-value { color: #3b82f6; }
+    .stat-card-modern.cpu .progress-bar { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+    
+    .stat-card-modern.memory .stat-value { color: #10b981; }
+    .stat-card-modern.memory .progress-bar { background: linear-gradient(90deg, #10b981, #34d399); }
+    
+    .stat-card-modern.disk .stat-value { color: #f59e0b; }
+    .stat-card-modern.disk .progress-bar { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    
+    .info-table td {
+        padding: 0.625rem 0;
+        border: none;
+    }
+    
+    .info-table td:first-child {
+        color: var(--text-secondary);
+        font-weight: 500;
+    }
+    
+    .info-table td:last-child {
+        text-align: right;
+        font-weight: 600;
+    }
+    
+    .storage-item {
+        padding: 0.75rem;
+        border-radius: 8px;
+        background-color: rgba(255,255,255,0.03);
+        margin-bottom: 0.5rem;
+        border: 1px solid var(--card-border);
+    }
+    
+    .storage-item .path {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+    
+    .storage-item .size {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .disk-usage-bar {
+        height: 24px;
+        border-radius: 6px;
+        overflow: hidden;
+        display: flex;
+        background-color: rgba(255,255,255,0.1);
+    }
+    
+    .disk-usage-bar .segment {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: white;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+        min-width: 30px;
+        transition: width 0.3s ease;
+    }
+    
+    .legend-item {
+        display: inline-flex;
+        align-items: center;
+        margin-right: 1rem;
+        font-size: 0.8rem;
+    }
+    
+    .legend-color {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        margin-right: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-speedometer2 me-2"></i>System Monitor</h2>
+    <button class="btn btn-outline-primary" onclick="loadStats(); loadProcesses(); loadDiskBreakdown();">
+        <i class="bi bi-arrow-clockwise me-1"></i> Refresh All
+    </button>
+</div>
+
+<!-- Main Stats -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-4">
+        <div class="card stat-card-modern cpu">
+            <i class="bi bi-cpu stat-icon"></i>
+            <div class="stat-label">CPU Usage</div>
+            <div class="stat-value" id="cpuPercent">--%</div>
+            <div class="progress mt-3 mb-3">
+                <div class="progress-bar" id="cpuBar" role="progressbar" style="width: 0%"></div>
+            </div>
+            <div class="row text-center">
+                <div class="col-6">
+                    <div class="text-muted small">Cores</div>
+                    <div class="fw-bold" id="cpuCores">--</div>
+                </div>
+                <div class="col-6">
+                    <div class="text-muted small">Load Avg</div>
+                    <div class="fw-bold" id="loadAvg">--</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card stat-card-modern memory">
+            <i class="bi bi-memory stat-icon"></i>
+            <div class="stat-label">Memory Usage</div>
+            <div class="stat-value" id="memPercent">--%</div>
+            <div class="progress mt-3 mb-3">
+                <div class="progress-bar" id="memBar" role="progressbar" style="width: 0%"></div>
+            </div>
+            <div class="row text-center">
+                <div class="col-6">
+                    <div class="text-muted small">Used</div>
+                    <div class="fw-bold" id="memUsed">--</div>
+                </div>
+                <div class="col-6">
+                    <div class="text-muted small">Total</div>
+                    <div class="fw-bold" id="memTotal">--</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card stat-card-modern disk">
+            <i class="bi bi-hdd stat-icon"></i>
+            <div class="stat-label">Disk Usage</div>
+            <div class="stat-value" id="diskPercent">--%</div>
+            <div class="progress mt-3 mb-3">
+                <div class="progress-bar" id="diskBar" role="progressbar" style="width: 0%"></div>
+            </div>
+            <div class="row text-center">
+                <div class="col-6">
+                    <div class="text-muted small">Used</div>
+                    <div class="fw-bold" id="diskUsed">--</div>
+                </div>
+                <div class="col-6">
+                    <div class="text-muted small">Total</div>
+                    <div class="fw-bold" id="diskTotal">--</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Storage Breakdown & System Info -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-8">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-pie-chart me-2"></i>Storage Breakdown</span>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadDiskBreakdown()">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="disk-usage-bar mb-3" id="diskUsageBar">
+                    <div class="segment" style="width: 100%; background-color: rgba(255,255,255,0.1);">Loading...</div>
+                </div>
+                <div class="mb-3" id="diskLegend"></div>
+                <div id="diskBreakdown">
+                    <div class="text-center text-muted py-3">
+                        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                        Analyzing disk usage...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header">
+                <i class="bi bi-info-circle me-2"></i>System Info
+            </div>
+            <div class="card-body">
+                <table class="table info-table mb-0">
+                    <tr>
+                        <td><i class="bi bi-clock me-2"></i>Uptime</td>
+                        <td id="uptime">--</td>
+                    </tr>
+                    <tr>
+                        <td><i class="bi bi-calendar me-2"></i>Boot Time</td>
+                        <td id="bootTime">--</td>
+                    </tr>
+                    <tr>
+                        <td><i class="bi bi-diagram-3 me-2"></i>Processes</td>
+                        <td id="processCount">--</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-header">
+                <i class="bi bi-wifi me-2"></i>Network I/O
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6">
+                        <div class="text-info fs-4 fw-bold" id="netRecv">--</div>
+                        <div class="text-muted small">
+                            <i class="bi bi-arrow-down"></i> Received
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="text-success fs-4 fw-bold" id="netSent">--</div>
+                        <div class="text-muted small">
+                            <i class="bi bi-arrow-up"></i> Sent
+                        </div>
+                    </div>
+                </div>
+                <hr class="my-3" style="border-color: var(--card-border);">
+                <div class="row text-center">
+                    <div class="col-6">
+                        <div class="fw-bold" id="packetsRecv">--</div>
+                        <div class="text-muted small">Packets In</div>
+                    </div>
+                    <div class="col-6">
+                        <div class="fw-bold" id="packetsSent">--</div>
+                        <div class="text-muted small">Packets Out</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Largest Files -->
+<div class="row g-4 mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-file-earmark-arrow-up me-2"></i>Largest Files (>10MB)</span>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadLargestFiles()">
+                    <i class="bi bi-arrow-clockwise me-1"></i> Scan
+                </button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>File Name</th>
+                                <th>Path</th>
+                                <th class="text-end">Size</th>
+                            </tr>
+                        </thead>
+                        <tbody id="largestFilesList">
+                            <tr><td colspan="3" class="text-center py-4 text-muted">
+                                Click "Scan" to find largest files
+                            </td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Top Processes -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-list-task me-2"></i>Top Processes</span>
+        <button class="btn btn-sm btn-outline-primary" onclick="loadProcesses()">
+            <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+        </button>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>PID</th>
+                        <th>Name</th>
+                        <th>User</th>
+                        <th>CPU %</th>
+                        <th>Memory %</th>
+                        <th>Status</th>
+                        <th class="text-center">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="processList">
+                    <tr><td colspan="7" class="text-center py-4 text-muted">
+                        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                        Loading processes...
+                    </td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const diskColors = [
+        '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+        '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1'
+    ];
+
+    async function loadStats() {
+        const data = await api('/api/system/stats');
+        if (data.success) {
+            const stats = data.stats;
+            
+            // CPU
+            document.getElementById('cpuPercent').textContent = stats.cpu.percent + '%';
+            document.getElementById('cpuBar').style.width = stats.cpu.percent + '%';
+            document.getElementById('cpuCores').textContent = stats.cpu.count;
+            document.getElementById('loadAvg').textContent = stats.cpu.load_avg[0].toFixed(2);
+            
+            // Memory
+            document.getElementById('memPercent').textContent = stats.memory.percent + '%';
+            document.getElementById('memBar').style.width = stats.memory.percent + '%';
+            document.getElementById('memUsed').textContent = formatBytes(stats.memory.used);
+            document.getElementById('memTotal').textContent = formatBytes(stats.memory.total);
+            
+            // Disk
+            document.getElementById('diskPercent').textContent = stats.disk.percent + '%';
+            document.getElementById('diskBar').style.width = stats.disk.percent + '%';
+            document.getElementById('diskUsed').textContent = formatBytes(stats.disk.used);
+            document.getElementById('diskTotal').textContent = formatBytes(stats.disk.total);
+            
+            // Network
+            document.getElementById('netRecv').textContent = formatBytes(stats.network.bytes_recv);
+            document.getElementById('netSent').textContent = formatBytes(stats.network.bytes_sent);
+            document.getElementById('packetsRecv').textContent = stats.network.packets_recv.toLocaleString();
+            document.getElementById('packetsSent').textContent = stats.network.packets_sent.toLocaleString();
+            
+            // System
+            document.getElementById('uptime').textContent = stats.uptime;
+            document.getElementById('bootTime').textContent = new Date(stats.boot_time).toLocaleDateString();
+            document.getElementById('processCount').textContent = stats.process_count;
+        }
+    }
+
+    async function loadDiskBreakdown() {
+        const data = await api('/api/system/disk-breakdown');
+        
+        if (data.success) {
+            const breakdown = data.breakdown;
+            const total = breakdown.reduce((sum, item) => sum + item.size, 0);
+            
+            // Build bar segments
+            let barHtml = '';
+            let legendHtml = '';
+            
+            breakdown.forEach((item, i) => {
+                const pct = total > 0 ? (item.size / total * 100) : 0;
+                const color = diskColors[i % diskColors.length];
+                
+                if (pct > 2) {
+                    barHtml += `<div class="segment" style="width: ${pct}%; background-color: ${color};">${pct.toFixed(0)}%</div>`;
+                } else if (pct > 0) {
+                    barHtml += `<div class="segment" style="width: ${pct}%; background-color: ${color};"></div>`;
+                }
+                
+                legendHtml += `
+                    <span class="legend-item">
+                        <span class="legend-color" style="background-color: ${color};"></span>
+                        ${item.name}
+                    </span>
+                `;
+            });
+            
+            document.getElementById('diskUsageBar').innerHTML = barHtml || '<div class="segment" style="width: 100%; background-color: rgba(255,255,255,0.1);">No data</div>';
+            document.getElementById('diskLegend').innerHTML = legendHtml;
+            
+            // Build breakdown list
+            let html = '';
+            breakdown.forEach((item, i) => {
+                const color = diskColors[i % diskColors.length];
+                html += `
+                    <div class="storage-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <span class="me-2" style="color: ${color};"><i class="bi bi-folder-fill"></i></span>
+                                <span class="size">${item.name}</span>
+                                <span class="path ms-2">${item.path}</span>
+                            </div>
+                            <div class="size">${formatBytes(item.size)}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            document.getElementById('diskBreakdown').innerHTML = html || '<div class="text-center text-muted py-3">No data available</div>';
+        } else {
+            document.getElementById('diskBreakdown').innerHTML = `<div class="text-center text-danger py-3">Error: ${data.error}</div>`;
+        }
+    }
+
+    async function loadProcesses() {
+        const data = await api('/api/system/processes');
+        const tbody = document.getElementById('processList');
+        
+        if (data.success) {
+            tbody.innerHTML = data.processes.map(p => {
+                let statusClass = 'secondary';
+                if (p.status === 'running') statusClass = 'success';
+                else if (p.status === 'sleeping') statusClass = 'info';
+                else if (p.status === 'zombie') statusClass = 'danger';
+                
+                return `
+                    <tr>
+                        <td><code>${p.pid}</code></td>
+                        <td class="fw-medium">${p.name}</td>
+                        <td class="text-muted">${p.user || '-'}</td>
+                        <td>
+                            <span class="${(p.cpu || 0) > 50 ? 'text-danger fw-bold' : ''}">${p.cpu || 0}%</span>
+                        </td>
+                        <td>
+                            <span class="${p.memory > 10 ? 'text-warning fw-bold' : ''}">${p.memory}%</span>
+                        </td>
+                        <td><span class="badge bg-${statusClass}">${p.status}</span></td>
+                        <td class="text-center">
+                            <button class="btn btn-sm btn-outline-danger" onclick="killProcess(${p.pid})" title="Kill Process">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        } else {
+            tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-danger">Error loading processes</td></tr>`;
+        }
+    }
+
+    async function killProcess(pid) {
+        if (!confirm(`Are you sure you want to kill process ${pid}?`)) return;
+        
+        const data = await api(`/api/system/kill/${pid}`, { method: 'POST' });
+        if (data.success) {
+            showToast(data.message, 'success');
+            loadProcesses();
+        } else {
+            showToast(data.error, 'error');
+        }
+    }
+
+    // Initial load
+    loadStats();
+    loadProcesses();
+    loadDiskBreakdown();
+    
+    // Auto-refresh stats every 5 seconds
+    setInterval(loadStats, 5000);
+</script>
+{% endblock %}
