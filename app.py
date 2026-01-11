@@ -4,6 +4,10 @@ VPS Management GUI - Main Flask Application
 A web-based interface for managing VPS servers, screen sessions, logs, and system resources.
 """
 
+# Eventlet monkey patching - must be at the very top
+import eventlet
+eventlet.monkey_patch()
+
 import os
 import subprocess
 import psutil
