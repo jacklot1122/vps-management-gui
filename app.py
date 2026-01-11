@@ -17,9 +17,16 @@ from functools import wraps
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
 from flask_socketio import SocketIO, emit
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from ssh_manager import ssh_manager, SSHManager
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+
+# VPS Connection settings from environment variables
+VPS_HOST = os.environ.get('VPS_HOST', '')
+VPS_USER = os.environ.get('VPS_USER', 'root')
+VPS_PASSWORD = os.environ.get('VPS_PASSWORD', '')
+VPS_SSH_KEY = os.environ.get('VPS_SSH_KEY', '')  # Private key as string
 
 # Initialize SocketIO with eventlet for production
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
@@ -75,8 +82,121 @@ def login():
 @login_required
 def logout():
     logout_user()
+    if ssh_manager.connected:
+        ssh_manager.disconnect()
     flash('Logged out successfully!', 'success')
     return redirect(url_for('login'))
+
+# =============================================================================
+# VPS Connection Management
+# =============================================================================
+
+def ensure_vps_connection():
+    """Ensure we're connected to the VPS, return error message if not"""
+    if ssh_manager.connected:
+        return None
+    
+    if not VPS_HOST:
+        return "VPS not configured. Set VPS_HOST, VPS_USER, and VPS_PASSWORD environment variables."
+    
+    try:
+        ssh_manager.connect(
+            host=VPS_HOST,
+            username=VPS_USER,
+            password=VPS_PASSWORD if VPS_PASSWORD else None,
+            key_string=VPS_SSH_KEY if VPS_SSH_KEY else None
+        )
+        return None
+    except Exception as e:
+        return f"Failed to connect to VPS: {str(e)}"
+
+@app.route('/api/vps/status', methods=['GET'])
+@login_required
+def vps_status():
+    """Check VPS connection status"""
+    if ssh_manager.connected:
+        return jsonify({
+            'success': True,
+            'connected': True,
+            'host': ssh_manager.host,
+            'user': ssh_manager.username,
+            'port': 22
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'connected': False,
+            'configured': bool(VPS_HOST),
+            'host': VPS_HOST,
+            'user': VPS_USER,
+            'port': 22
+        })
+
+@app.route('/api/vps/connect', methods=['POST'])
+@login_required
+def vps_connect():
+    """Connect to VPS with provided or environment credentials"""
+    data = request.get_json() or {}
+    
+    # Use provided values or fall back to environment variables
+    host = data.get('host') or VPS_HOST
+    user = data.get('user') or VPS_USER
+    port = int(data.get('port', 22))
+    password = data.get('password') or VPS_PASSWORD
+    ssh_key = data.get('ssh_key') or VPS_SSH_KEY
+    
+    if not host:
+        return jsonify({'success': False, 'error': 'No VPS host provided'})
+    
+    try:
+        # Disconnect first if already connected
+        if ssh_manager.connected:
+            ssh_manager.disconnect()
+        
+        ssh_manager.connect(host, user, password=password, key_string=ssh_key, port=port)
+        return jsonify({'success': True, 'message': f'Connected to {host}'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/vps/test', methods=['POST'])
+@login_required
+def vps_test():
+    """Test VPS connection without saving"""
+    data = request.get_json() or {}
+    
+    host = data.get('host')
+    user = data.get('user', 'root')
+    port = int(data.get('port', 22))
+    password = data.get('password')
+    ssh_key = data.get('ssh_key')
+    
+    if not host:
+        return jsonify({'success': False, 'error': 'No host provided'})
+    
+    # Create a temporary SSH manager for testing
+    test_manager = SSHManager()
+    try:
+        test_manager.connect(host, user, password=password, key_string=ssh_key, port=port)
+        # Test with a simple command
+        result = test_manager.execute('echo "Connection successful"')
+        test_manager.disconnect()
+        return jsonify({'success': True, 'message': 'Connection successful'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/vps/disconnect', methods=['POST'])
+@login_required
+def vps_disconnect():
+    """Disconnect from VPS"""
+    if ssh_manager.connected:
+        ssh_manager.disconnect()
+    return jsonify({'success': True, 'message': 'Disconnected'})
+
+@app.route('/settings')
+@login_required
+def settings():
+    """VPS Settings page"""
+    return render_template('settings.html')
 
 # =============================================================================
 # Dashboard Routes
@@ -85,7 +205,9 @@ def logout():
 @app.route('/')
 @login_required
 def dashboard():
-    return render_template('dashboard.html')
+    # Auto-connect to VPS on dashboard load
+    ensure_vps_connection()
+    return render_template('dashboard.html', vps_host=VPS_HOST, vps_connected=ssh_manager.connected)
 
 # =============================================================================
 # Screen Session Management
@@ -99,32 +221,13 @@ def screens():
 @app.route('/api/screens', methods=['GET'])
 @login_required
 def get_screens():
-    """Get list of all screen sessions"""
+    """Get list of all screen sessions from remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return jsonify({'success': False, 'error': error})
+    
     try:
-        result = subprocess.run(['screen', '-ls'], capture_output=True, text=True)
-        output = result.stdout + result.stderr
-        
-        screens = []
-        lines = output.split('\n')
-        for line in lines:
-            line = line.strip()
-            if '.' in line and ('Detached' in line or 'Attached' in line):
-                parts = line.split('\t')
-                if parts:
-                    screen_info = parts[0].strip()
-                    status = 'Attached' if 'Attached' in line else 'Detached'
-                    # Extract PID and name
-                    if '.' in screen_info:
-                        pid_name = screen_info.split('.')
-                        pid = pid_name[0]
-                        name = '.'.join(pid_name[1:]) if len(pid_name) > 1 else 'unnamed'
-                        screens.append({
-                            'pid': pid,
-                            'name': name,
-                            'full_name': screen_info,
-                            'status': status
-                        })
-        
+        screens = ssh_manager.get_screens()
         return jsonify({'success': True, 'screens': screens})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -132,7 +235,11 @@ def get_screens():
 @app.route('/api/screens/create', methods=['POST'])
 @login_required
 def create_screen():
-    """Create a new screen session with optional venv and folder support"""
+    """Create a new screen session on remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return jsonify({'success': False, 'error': error})
+    
     data = request.get_json()
     name = data.get('name', f'session_{datetime.now().strftime("%Y%m%d_%H%M%S")}')
     command = data.get('command', '')
@@ -140,60 +247,31 @@ def create_screen():
     use_venv = data.get('use_venv', False)
     install_requirements = data.get('install_requirements', False)
     
-    # Expand ~ to home directory
-    if folder.startswith('~'):
-        folder = os.path.expanduser(folder)
-    
-    # Build the startup script
-    startup_commands = []
-    
-    # Change to the folder
-    startup_commands.append(f'cd "{folder}" || exit 1')
-    
-    if use_venv:
-        # Check if venv exists, if not create it
-        venv_path = os.path.join(folder, '.venv')
-        startup_commands.append(f'''
-if [ ! -d ".venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv .venv
-fi
-echo "Activating virtual environment..."
-source .venv/bin/activate
-''')
-        
-        if install_requirements:
-            startup_commands.append('''
-if [ -f "requirements.txt" ]; then
-    echo "Installing requirements..."
-    pip install -r requirements.txt
-fi
-''')
-    
-    # Add the actual command to run
-    if command:
-        startup_commands.append(f'echo "Running: {command}"')
-        startup_commands.append(command)
-    
-    # Keep the shell alive after command finishes (or if no command)
-    startup_commands.append('exec bash')
-    
-    # Join all commands
-    full_script = '\n'.join(startup_commands)
-    
     try:
-        # Create screen with the startup script
-        subprocess.Popen(['screen', '-dmS', name, 'bash', '-c', full_script])
-        return jsonify({'success': True, 'message': f'Screen "{name}" created successfully'})
+        success = ssh_manager.create_screen(
+            name=name,
+            command=command,
+            folder=folder,
+            use_venv=use_venv,
+            install_requirements=install_requirements
+        )
+        if success:
+            return jsonify({'success': True, 'message': f'Screen "{name}" created successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to create screen session'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/screens/<screen_id>/delete', methods=['DELETE'])
 @login_required
 def delete_screen(screen_id):
-    """Delete a screen session"""
+    """Delete a screen session on remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return jsonify({'success': False, 'error': error})
+    
     try:
-        subprocess.run(['screen', '-S', screen_id, '-X', 'quit'], capture_output=True)
+        ssh_manager.delete_screen(screen_id)
         return jsonify({'success': True, 'message': 'Screen deleted successfully'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -201,32 +279,30 @@ def delete_screen(screen_id):
 @app.route('/api/screens/<screen_id>/output', methods=['GET'])
 @login_required
 def get_screen_output(screen_id):
-    """Get screen session output (scrollback buffer)"""
+    """Get screen session output from remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return jsonify({'success': False, 'error': error})
+    
     try:
-        # Create a temp file to capture screen output
-        temp_file = f'/tmp/screen_capture_{screen_id}'
-        subprocess.run(['screen', '-S', screen_id, '-X', 'hardcopy', temp_file], capture_output=True)
-        
-        if os.path.exists(temp_file):
-            with open(temp_file, 'r') as f:
-                content = f.read()
-            os.remove(temp_file)
-            return jsonify({'success': True, 'output': content})
-        else:
-            return jsonify({'success': False, 'error': 'Could not capture screen output'})
+        output = ssh_manager.get_screen_output(screen_id)
+        return jsonify({'success': True, 'output': output})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/screens/<screen_id>/send', methods=['POST'])
 @login_required
 def send_to_screen(screen_id):
-    """Send a command to a screen session"""
+    """Send a command to a screen session on remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return jsonify({'success': False, 'error': error})
+    
     data = request.get_json()
     command = data.get('command', '')
     
     try:
-        # Send command to screen
-        subprocess.run(['screen', '-S', screen_id, '-X', 'stuff', f'{command}\n'], capture_output=True)
+        ssh_manager.send_to_screen(screen_id, command)
         return jsonify({'success': True, 'message': 'Command sent'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -243,51 +319,60 @@ def logs():
 @app.route('/api/logs', methods=['GET'])
 @login_required
 def get_log_files():
-    """Get list of log files"""
-    log_dirs = ['/var/log', os.path.expanduser('~/logs')]
-    log_files = []
+    """Get list of log files from remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return error
     
-    for log_dir in log_dirs:
-        if os.path.exists(log_dir):
-            try:
-                for root, dirs, files in os.walk(log_dir):
-                    # Limit depth
-                    depth = root.replace(log_dir, '').count(os.sep)
-                    if depth < 2:
-                        for file in files:
-                            if file.endswith('.log') or file in ['syslog', 'auth.log', 'messages', 'dmesg']:
-                                filepath = os.path.join(root, file)
-                                try:
-                                    stat = os.stat(filepath)
-                                    log_files.append({
-                                        'path': filepath,
-                                        'name': file,
-                                        'size': stat.st_size,
-                                        'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
-                                    })
-                                except (PermissionError, FileNotFoundError):
-                                    pass
-            except PermissionError:
-                pass
-    
-    return jsonify({'success': True, 'logs': log_files})
+    try:
+        # Search for log files on remote VPS
+        cmd = '''find /var/log -maxdepth 2 -type f \\( -name "*.log" -o -name "syslog" -o -name "auth.log" -o -name "messages" -o -name "dmesg" \\) 2>/dev/null | head -50'''
+        result = ssh_manager.execute(cmd)
+        
+        log_files = []
+        for filepath in result['stdout'].strip().split('\n'):
+            if filepath:
+                # Get file stats
+                stat_cmd = f'stat -c "%s %Y" "{filepath}" 2>/dev/null'
+                stat_result = ssh_manager.execute(stat_cmd)
+                if stat_result['stdout'].strip():
+                    parts = stat_result['stdout'].strip().split()
+                    if len(parts) >= 2:
+                        log_files.append({
+                            'path': filepath,
+                            'name': os.path.basename(filepath),
+                            'size': int(parts[0]),
+                            'modified': datetime.fromtimestamp(int(parts[1])).isoformat()
+                        })
+        
+        return jsonify({'success': True, 'logs': log_files})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/logs/read', methods=['POST'])
 @login_required
 def read_log():
-    """Read contents of a log file"""
+    """Read contents of a log file from remote VPS"""
     data = request.get_json()
     filepath = data.get('path', '')
     lines = data.get('lines', 100)
     
     # Security check - only allow reading from specific directories
-    allowed_dirs = ['/var/log', os.path.expanduser('~/logs'), os.path.expanduser('~')]
+    allowed_dirs = ['/var/log', '/root', '/home']
     if not any(filepath.startswith(d) for d in allowed_dirs):
         return jsonify({'success': False, 'error': 'Access denied'})
     
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        result = subprocess.run(['tail', '-n', str(lines), filepath], capture_output=True, text=True)
-        return jsonify({'success': True, 'content': result.stdout, 'error_output': result.stderr})
+        result = ssh_manager.execute(f'tail -n {lines} "{filepath}"')
+        return jsonify({
+            'success': True, 
+            'content': result['stdout'], 
+            'error_output': result['stderr']
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
@@ -303,159 +388,199 @@ def system():
 @app.route('/api/system/stats', methods=['GET'])
 @login_required
 def get_system_stats():
-    """Get system resource statistics"""
+    """Get system resource statistics from remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        # CPU
-        cpu_percent = psutil.cpu_percent(interval=1)
-        cpu_count = psutil.cpu_count()
+        # Get all stats in one command for efficiency
+        cmd = '''
+        echo "===CPU==="
+        grep -c ^processor /proc/cpuinfo
+        cat /proc/loadavg | awk '{print $1, $2, $3}'
+        top -bn1 | grep "Cpu(s)" | awk '{print $2}'
+        echo "===MEM==="
+        free -b | grep Mem | awk '{print $2, $3, $4}'
+        echo "===DISK==="
+        df -B1 / | tail -1 | awk '{print $2, $3, $4, $5}'
+        echo "===NET==="
+        cat /proc/net/dev | grep -E "eth0|ens" | head -1 | awk '{print $2, $10}'
+        echo "===UPTIME==="
+        uptime -s
+        echo "===PROCS==="
+        ps aux | wc -l
+        '''
+        result = ssh_manager.execute(cmd)
+        output = result['stdout']
         
-        # Memory
-        memory = psutil.virtual_memory()
+        # Parse the output
+        sections = output.split('===')
+        stats = {
+            'cpu': {'percent': 0, 'count': 1, 'load_avg': [0, 0, 0]},
+            'memory': {'total': 0, 'used': 0, 'free': 0, 'percent': 0},
+            'disk': {'total': 0, 'used': 0, 'free': 0, 'percent': 0},
+            'network': {'bytes_sent': 0, 'bytes_recv': 0, 'packets_sent': 0, 'packets_recv': 0},
+            'uptime': 'Unknown',
+            'boot_time': '',
+            'process_count': 0
+        }
         
-        # Disk
-        disk = psutil.disk_usage('/')
+        for section in sections:
+            lines = section.strip().split('\n')
+            if len(lines) < 2:
+                continue
+            
+            name = lines[0].strip()
+            
+            if name == 'CPU':
+                if len(lines) >= 3:
+                    stats['cpu']['count'] = int(lines[1].strip() or 1)
+                    load_parts = lines[2].strip().split()
+                    stats['cpu']['load_avg'] = [float(x) for x in load_parts[:3]] if len(load_parts) >= 3 else [0, 0, 0]
+                    if len(lines) >= 4 and lines[3].strip():
+                        stats['cpu']['percent'] = float(lines[3].strip().replace(',', '.'))
+            
+            elif name == 'MEM':
+                if len(lines) >= 2:
+                    parts = lines[1].strip().split()
+                    if len(parts) >= 3:
+                        total = int(parts[0])
+                        used = int(parts[1])
+                        free = int(parts[2])
+                        stats['memory'] = {
+                            'total': total,
+                            'used': used,
+                            'free': free,
+                            'percent': round(used / total * 100, 1) if total > 0 else 0
+                        }
+            
+            elif name == 'DISK':
+                if len(lines) >= 2:
+                    parts = lines[1].strip().split()
+                    if len(parts) >= 4:
+                        stats['disk'] = {
+                            'total': int(parts[0]),
+                            'used': int(parts[1]),
+                            'free': int(parts[2]),
+                            'percent': int(parts[3].replace('%', ''))
+                        }
+            
+            elif name == 'NET':
+                if len(lines) >= 2:
+                    parts = lines[1].strip().split()
+                    if len(parts) >= 2:
+                        stats['network']['bytes_recv'] = int(parts[0])
+                        stats['network']['bytes_sent'] = int(parts[1])
+            
+            elif name == 'UPTIME':
+                if len(lines) >= 2:
+                    boot_str = lines[1].strip()
+                    stats['boot_time'] = boot_str
+                    try:
+                        boot_time = datetime.strptime(boot_str, '%Y-%m-%d %H:%M:%S')
+                        uptime = datetime.now() - boot_time
+                        stats['uptime'] = str(uptime).split('.')[0]
+                    except:
+                        stats['uptime'] = 'Unknown'
+            
+            elif name == 'PROCS':
+                if len(lines) >= 2:
+                    stats['process_count'] = int(lines[1].strip() or 0)
         
-        # Network
-        net_io = psutil.net_io_counters()
-        
-        # Uptime
-        boot_time = datetime.fromtimestamp(psutil.boot_time())
-        uptime = datetime.now() - boot_time
-        
-        # Load average
-        load_avg = os.getloadavg()
-        
-        # Processes
-        process_count = len(psutil.pids())
-        
-        return jsonify({
-            'success': True,
-            'stats': {
-                'cpu': {
-                    'percent': cpu_percent,
-                    'count': cpu_count,
-                    'load_avg': list(load_avg)
-                },
-                'memory': {
-                    'total': memory.total,
-                    'used': memory.used,
-                    'free': memory.free,
-                    'percent': memory.percent
-                },
-                'disk': {
-                    'total': disk.total,
-                    'used': disk.used,
-                    'free': disk.free,
-                    'percent': disk.percent
-                },
-                'network': {
-                    'bytes_sent': net_io.bytes_sent,
-                    'bytes_recv': net_io.bytes_recv,
-                    'packets_sent': net_io.packets_sent,
-                    'packets_recv': net_io.packets_recv
-                },
-                'uptime': str(uptime).split('.')[0],
-                'boot_time': boot_time.isoformat(),
-                'process_count': process_count
-            }
-        })
+        return jsonify({'success': True, 'stats': stats})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/system/processes', methods=['GET'])
 @login_required
 def get_processes():
-    """Get list of running processes"""
+    """Get list of running processes from remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        processes = []
-        for proc in psutil.process_iter(['pid', 'name', 'username', 'cpu_percent', 'memory_percent', 'status']):
-            try:
-                pinfo = proc.info
-                processes.append({
-                    'pid': pinfo['pid'],
-                    'name': pinfo['name'],
-                    'user': pinfo['username'],
-                    'cpu': pinfo['cpu_percent'],
-                    'memory': round(pinfo['memory_percent'], 2),
-                    'status': pinfo['status']
-                })
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+        cmd = "ps aux --sort=-%cpu | head -51 | tail -50 | awk '{print $2, $1, $3, $4, $8, $11}'"
+        result = ssh_manager.execute(cmd)
         
-        # Sort by CPU usage
-        processes.sort(key=lambda x: x['cpu'] or 0, reverse=True)
-        return jsonify({'success': True, 'processes': processes[:50]})  # Top 50
+        processes = []
+        for line in result['stdout'].strip().split('\n'):
+            parts = line.split(None, 5)
+            if len(parts) >= 5:
+                processes.append({
+                    'pid': int(parts[0]),
+                    'user': parts[1],
+                    'cpu': float(parts[2]),
+                    'memory': float(parts[3]),
+                    'status': parts[4],
+                    'name': parts[5] if len(parts) > 5 else 'unknown'
+                })
+        
+        return jsonify({'success': True, 'processes': processes})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/system/kill/<int:pid>', methods=['POST'])
 @login_required
 def kill_process(pid):
-    """Kill a process"""
+    """Kill a process on remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        process = psutil.Process(pid)
-        process.terminate()
-        return jsonify({'success': True, 'message': f'Process {pid} terminated'})
-    except psutil.NoSuchProcess:
-        return jsonify({'success': False, 'error': 'Process not found'})
-    except psutil.AccessDenied:
-        return jsonify({'success': False, 'error': 'Access denied'})
+        result = ssh_manager.execute(f'kill -15 {pid}')
+        if result['exit_code'] == 0:
+            return jsonify({'success': True, 'message': f'Process {pid} terminated'})
+        else:
+            return jsonify({'success': False, 'error': result['stderr'] or 'Failed to kill process'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/system/disk-breakdown', methods=['GET'])
 @login_required
 def get_disk_breakdown():
-    """Get disk usage breakdown by directory"""
+    """Get disk usage breakdown by directory from remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        breakdown = []
-        home_dir = os.path.expanduser('~')
+        # Get home directory first
+        home_result = ssh_manager.execute('echo $HOME')
+        home_dir = home_result['stdout'].strip()
         
-        # Key directories to analyze - use absolute paths
+        # VPS-friendly directories
         dirs_to_check = [
-            ('Documents', os.path.join(home_dir, 'Documents')),
-            ('Downloads', os.path.join(home_dir, 'Downloads')),
-            ('Desktop', os.path.join(home_dir, 'Desktop')),
-            ('Pictures', os.path.join(home_dir, 'Pictures')),
-            ('Music', os.path.join(home_dir, 'Music')),
-            ('Movies', os.path.join(home_dir, 'Movies')),
-            ('Library', os.path.join(home_dir, 'Library')),
-            ('.cache', os.path.join(home_dir, '.cache')),
-            ('.local', os.path.join(home_dir, '.local')),
-            ('Applications', '/Applications'),
+            ('home', home_dir),
             ('var/log', '/var/log'),
             ('tmp', '/tmp'),
+            ('opt', '/opt'),
+            ('usr/local', '/usr/local'),
+            ('var/www', '/var/www'),
+            ('var/lib', '/var/lib'),
         ]
         
+        breakdown = []
         for name, path in dirs_to_check:
-            # Ensure path is absolute and exists
-            path = os.path.abspath(os.path.expanduser(path))
-            if os.path.exists(path) and os.path.isdir(path):
-                try:
-                    # Use du command for faster calculation
-                    result = subprocess.run(
-                        ['du', '-sk', path],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if result.returncode == 0:
-                        size_kb = int(result.stdout.split()[0])
+            result = ssh_manager.execute(f'du -sk "{path}" 2>/dev/null | head -1')
+            if result['stdout'].strip():
+                parts = result['stdout'].strip().split()
+                if parts:
+                    try:
+                        size_kb = int(parts[0])
                         total_size = size_kb * 1024
-                        
                         if total_size > 1024 * 1024:  # Only show if > 1MB
                             breakdown.append({
                                 'name': name,
                                 'path': path,
                                 'size': total_size
                             })
-                except (subprocess.TimeoutExpired, ValueError, PermissionError):
-                    pass
+                    except ValueError:
+                        pass
         
-        # Sort by size descending
         breakdown.sort(key=lambda x: x['size'], reverse=True)
-        
-        # Return top 10
         return jsonify({'success': True, 'breakdown': breakdown[:10]})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -463,34 +588,25 @@ def get_disk_breakdown():
 @app.route('/api/system/largest-files', methods=['GET'])
 @login_required
 def get_largest_files():
-    """Get the largest files on the system"""
+    """Get the largest files on remote VPS"""
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        home_dir = os.path.expanduser('~')
-        
-        # Verify home directory exists
-        if not os.path.exists(home_dir):
-            return jsonify({'success': False, 'error': 'Home directory not found'})
-        
-        # Find large files using find command
-        # Added -L to follow symlinks and better error handling
-        result = subprocess.run(
-            ['find', home_dir, '-type', 'f', '-size', '+10M', '-exec', 'ls', '-lh', '{}', '+'],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            errors='ignore'
-        )
+        # Find large files
+        cmd = 'find / -type f -size +10M -exec ls -lh {} + 2>/dev/null | sort -k5 -rh | head -30'
+        result = ssh_manager.execute(cmd, timeout=60)
         
         files = []
-        if result.stdout.strip():
-            for line in result.stdout.strip().split('\n'):
+        if result['stdout'].strip():
+            for line in result['stdout'].strip().split('\n'):
                 if line:
                     parts = line.split()
                     if len(parts) >= 9:
                         size_str = parts[4]
                         filepath = ' '.join(parts[8:])
                         
-                        # Convert size string to bytes
                         size_bytes = 0
                         try:
                             if size_str.endswith('G'):
@@ -511,11 +627,10 @@ def get_largest_files():
                             'size_str': size_str
                         })
         
-        # Sort by size descending and get top 20
         files.sort(key=lambda x: x['size'], reverse=True)
-        
-        # If stderr has content, include it as a warning
-        response = {'success': True, 'files': files[:20]}
+        return jsonify({'success': True, 'files': files[:20]})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
         if result.stderr and result.stderr.strip():
             response['warning'] = 'Some files could not be accessed due to permissions'
         
@@ -537,46 +652,31 @@ def files():
 @app.route('/api/files/list', methods=['POST'])
 @login_required
 def list_files():
-    """List files in a directory"""
+    """List files in a directory on remote VPS"""
     data = request.get_json()
     path = data.get('path', '~')
     
-    # Expand ~ to home directory
-    if path.startswith('~'):
-        path = os.path.expanduser(path)
-    
-    # Get absolute path
-    path = os.path.abspath(path)
-    
-    # Verify the path exists
-    if not os.path.exists(path):
-        return jsonify({'success': False, 'error': f'Path does not exist: {path}'})
+    error = ensure_vps_connection()
+    if error:
+        return error
     
     try:
-        items = []
+        actual_path, items = ssh_manager.list_directory(path)
         
-        for item in os.listdir(path):
-            item_path = os.path.join(path, item)
-            try:
-                stat = os.stat(item_path)
-                items.append({
-                    'name': item,
-                    'path': item_path,
-                    'is_dir': os.path.isdir(item_path),
-                    'size': stat.st_size,
-                    'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                    'permissions': oct(stat.st_mode)[-3:]
-                })
-            except (PermissionError, FileNotFoundError):
-                pass
+        # Format timestamps
+        for item in items:
+            item['modified'] = datetime.fromtimestamp(item['modified']).isoformat()
         
         # Sort: directories first, then files
         items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
         
+        # Get parent path
+        parent = os.path.dirname(actual_path)
+        
         return jsonify({
             'success': True,
-            'path': path,
-            'parent': os.path.dirname(path),
+            'path': actual_path,
+            'parent': parent,
             'items': items
         })
     except Exception as e:
@@ -584,14 +684,19 @@ def list_files():
 
 @app.route('/api/files/read', methods=['POST'])
 @login_required
-def read_file():
-    """Read file contents"""
+def read_file_content():
+    """Read file contents from remote VPS"""
     data = request.get_json()
     path = data.get('path', '')
     
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        with open(path, 'r') as f:
-            content = f.read(1024 * 1024)  # Max 1MB
+        content = ssh_manager.read_file(path)
+        if isinstance(content, bytes):
+            content = content.decode('utf-8', errors='replace')
         return jsonify({'success': True, 'content': content})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -599,14 +704,17 @@ def read_file():
 @app.route('/api/files/write', methods=['POST'])
 @login_required
 def write_file():
-    """Write file contents"""
+    """Write file contents to remote VPS"""
     data = request.get_json()
     path = data.get('path', '')
     content = data.get('content', '')
     
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        with open(path, 'w') as f:
-            f.write(content)
+        ssh_manager.write_file(path, content)
         return jsonify({'success': True, 'message': 'File saved'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -614,16 +722,20 @@ def write_file():
 @app.route('/api/files/delete', methods=['POST'])
 @login_required
 def delete_file():
-    """Delete a file or directory"""
+    """Delete a file or directory on remote VPS"""
     data = request.get_json()
     path = data.get('path', '')
     
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        if os.path.isdir(path):
-            import shutil
-            shutil.rmtree(path)  # Delete directory and all contents
-        else:
-            os.remove(path)
+        # Check if it's a directory
+        result = ssh_manager.execute(f'test -d "{path}" && echo "dir" || echo "file"')
+        is_dir = result['stdout'].strip() == 'dir'
+        
+        ssh_manager.delete(path, is_dir=is_dir)
         return jsonify({'success': True, 'message': 'Deleted successfully'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -631,25 +743,38 @@ def delete_file():
 @app.route('/api/files/download', methods=['GET'])
 @login_required
 def download_file():
-    """Download a file"""
-    from flask import send_file
+    """Download a file from remote VPS"""
+    from flask import Response
     path = request.args.get('path', '')
     
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        if not os.path.exists(path):
-            return jsonify({'success': False, 'error': 'File not found'})
+        # Check if path exists and is a file
+        result = ssh_manager.execute(f'test -f "{path}" && echo "exists"')
+        if result['stdout'].strip() != 'exists':
+            return jsonify({'success': False, 'error': 'File not found or is a directory'})
         
-        if os.path.isdir(path):
-            return jsonify({'success': False, 'error': 'Cannot download directories'})
+        # Download file content
+        content = ssh_manager.download_file(path)
+        filename = os.path.basename(path)
         
-        return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+        return Response(
+            content,
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Type': 'application/octet-stream'
+            }
+        )
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/files/upload', methods=['POST'])
 @login_required
 def upload_file():
-    """Upload a file to a directory"""
+    """Upload a file to remote VPS"""
     if 'file' not in request.files:
         return jsonify({'success': False, 'error': 'No file provided'})
     
@@ -659,29 +784,33 @@ def upload_file():
     if file.filename == '':
         return jsonify({'success': False, 'error': 'No file selected'})
     
-    # Expand ~ to home directory
-    if path.startswith('~'):
-        path = os.path.expanduser(path)
-    
-    # Ensure the directory exists
-    if not os.path.exists(path):
-        try:
-            os.makedirs(path)
-        except Exception as e:
-            return jsonify({'success': False, 'error': f'Could not create directory: {str(e)}'})
+    error = ensure_vps_connection()
+    if error:
+        return error
     
     try:
+        # Expand ~ on remote
+        if path.startswith('~'):
+            result = ssh_manager.execute(f'echo {path}')
+            path = result['stdout'].strip()
+        
+        # Ensure directory exists
+        ssh_manager.execute(f'mkdir -p "{path}"')
+        
         # Secure the filename
         from werkzeug.utils import secure_filename
         filename = secure_filename(file.filename)
-        filepath = os.path.join(path, filename)
+        remote_path = os.path.join(path, filename)
         
-        file.save(filepath)
+        # Upload file data
+        file_data = file.read()
+        ssh_manager.upload_file(file_data, remote_path, is_data=True)
+        
         return jsonify({
             'success': True, 
             'message': f'File uploaded successfully',
             'filename': filename,
-            'filepath': filepath
+            'filepath': remote_path
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -698,7 +827,7 @@ def terminal():
 @app.route('/api/execute', methods=['POST'])
 @login_required
 def execute_command():
-    """Execute a shell command"""
+    """Execute a shell command on remote VPS"""
     data = request.get_json()
     command = data.get('command', '')
     
@@ -707,22 +836,18 @@ def execute_command():
     if any(d in command for d in dangerous):
         return jsonify({'success': False, 'error': 'Command blocked for security'})
     
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
     try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        result = ssh_manager.execute(command, timeout=30)
         return jsonify({
             'success': True,
-            'stdout': result.stdout,
-            'stderr': result.stderr,
-            'returncode': result.returncode
+            'stdout': result['stdout'],
+            'stderr': result['stderr'],
+            'returncode': result['exit_code']
         })
-    except subprocess.TimeoutExpired:
-        return jsonify({'success': False, 'error': 'Command timed out'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
@@ -738,13 +863,48 @@ def handle_connect():
 
 @socketio.on('request_stats')
 def handle_stats_request():
-    """Send real-time system stats"""
+    """Send real-time system stats from remote VPS"""
     try:
-        cpu_percent = psutil.cpu_percent()
-        memory = psutil.virtual_memory()
+        if not ssh_manager.connected:
+            # Try to connect
+            host = os.environ.get('VPS_HOST')
+            user = os.environ.get('VPS_USER', 'root')
+            password = os.environ.get('VPS_PASSWORD')
+            ssh_key = os.environ.get('VPS_SSH_KEY')
+            
+            if host:
+                try:
+                    ssh_manager.connect(host, user, password=password, key_string=ssh_key)
+                except:
+                    emit('error', {'message': 'VPS not connected'})
+                    return
+            else:
+                emit('error', {'message': 'VPS not configured'})
+                return
+        
+        # Get CPU and memory from remote
+        cmd = '''grep -c ^processor /proc/cpuinfo && free | grep Mem | awk '{print $3/$2 * 100}' '''
+        result = ssh_manager.execute(cmd, timeout=5)
+        lines = result['stdout'].strip().split('\n')
+        
+        cpu = 0
+        memory = 0
+        if len(lines) >= 2:
+            try:
+                memory = float(lines[1])
+            except:
+                pass
+        
+        # Get load average as CPU indicator
+        load_result = ssh_manager.execute('cat /proc/loadavg | awk "{print \\$1}"', timeout=5)
+        try:
+            cpu = float(load_result['stdout'].strip()) * 10  # Scale load avg
+        except:
+            pass
+        
         emit('stats_update', {
-            'cpu': cpu_percent,
-            'memory': memory.percent
+            'cpu': min(cpu, 100),  # Cap at 100%
+            'memory': memory
         })
     except Exception as e:
         emit('error', {'message': str(e)})
