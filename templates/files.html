@@ -12,7 +12,7 @@
                 <button class="btn btn-sm btn-outline-secondary" onclick="goUp()" title="Go Up">
                     <i class="bi bi-arrow-up"></i>
                 </button>
-                <button class="btn btn-sm btn-outline-secondary" onclick="goHome()" title="Go Home (~)">
+                <button class="btn btn-sm btn-outline-secondary" onclick="goHome()" title="Go Home">
                     <i class="bi bi-house"></i>
                 </button>
                 <button class="btn btn-sm btn-outline-secondary" onclick="navigateTo('/')" title="Go to Root (/)">
@@ -29,9 +29,6 @@
                 <button class="btn btn-sm btn-outline-info" onclick="navigateTo('/var/log')" title="Logs">
                     <i class="bi bi-file-text"></i> Logs
                 </button>
-                <button class="btn btn-sm btn-outline-info" onclick="navigateTo('/tmp')" title="Temp">
-                    <i class="bi bi-folder"></i> /tmp
-                </button>
             </div>
             <div class="flex-grow-1 d-flex">
                 <input type="text" class="form-control form-control-sm" id="currentPath" 
@@ -47,12 +44,18 @@
     </div>
     <div class="card-body">
         <div class="table-responsive">
-            <table class="table table-hover">
+            <table class="table table-hover" id="fileTable">
                 <thead>
                     <tr>
-                        <th>Name</th>
-                        <th>Size</th>
-                        <th>Modified</th>
+                        <th class="sortable" onclick="sortBy('name')" style="cursor:pointer">
+                            Name <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
+                        </th>
+                        <th class="sortable" onclick="sortBy('size')" style="cursor:pointer">
+                            Size <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
+                        </th>
+                        <th class="sortable" onclick="sortBy('modified')" style="cursor:pointer">
+                            Modified <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
+                        </th>
                         <th>Permissions</th>
                         <th>Actions</th>
                     </tr>
@@ -74,8 +77,7 @@
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <textarea class="form-control font-monospace" id="fileContent" 
-                          rows="20" style="font-size: 0.9rem;"></textarea>
+                <textarea class="form-control font-monospace" id="fileContent" rows="20"></textarea>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
@@ -86,137 +88,235 @@
         </div>
     </div>
 </div>
+
+<!-- Run in Screen Modal -->
+<div class="modal fade" id="runModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-play-circle me-2"></i>Run in Screen</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">File to Run</label>
+                    <input type="text" class="form-control" id="runFilePath" readonly>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Screen Name</label>
+                    <input type="text" class="form-control" id="runScreenName" placeholder="my-script">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Working Directory</label>
+                    <input type="text" class="form-control" id="runWorkDir" readonly>
+                </div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="runUseVenv" checked>
+                    <label class="form-check-label" for="runUseVenv">
+                        Use Virtual Environment (source venv/bin/activate)
+                    </label>
+                </div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="runInstallReqs">
+                    <label class="form-check-label" for="runInstallReqs">
+                        Install requirements.txt first
+                    </label>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Custom Command (optional)</label>
+                    <input type="text" class="form-control" id="runCustomCmd" placeholder="Leave empty to auto-detect">
+                    <small class="text-muted">Auto-detects: python for .py, node for .js, bash for .sh</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" onclick="executeRunInScreen()">
+                    <i class="bi bi-play-fill me-1"></i>Run
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    let currentDir = '';
-    let parentDir = '';
-    let editingFile = null;
+let currentDir = '';
+let parentDir = '';
+let editingFile = null;
+let currentItems = [];
+let sortColumn = 'name';
+let sortAsc = true;
 
-    async function loadDirectory(path) {
-        const data = await api('/api/files/list', {
-            method: 'POST',
-            body: JSON.stringify({ path: path || '~' })
-        });
+async function loadDirectory(path) {
+    const data = await api('/api/files/list', {
+        method: 'POST',
+        body: JSON.stringify({ path: path || '/home/ubuntu' })
+    });
+    
+    if (data.success) {
+        currentDir = data.path;
+        parentDir = data.parent;
+        currentItems = data.items;
+        document.getElementById('currentPath').value = currentDir;
+        renderFiles();
+    } else {
+        showToast(data.error, 'error');
+    }
+}
+
+function sortBy(column) {
+    if (sortColumn === column) {
+        sortAsc = !sortAsc;
+    } else {
+        sortColumn = column;
+        sortAsc = true;
+    }
+    renderFiles();
+}
+
+function renderFiles() {
+    const sorted = [...currentItems].sort((a, b) => {
+        if (a.is_dir && !b.is_dir) return -1;
+        if (!a.is_dir && b.is_dir) return 1;
         
-        if (data.success) {
-            currentDir = data.path;
-            parentDir = data.parent;
-            document.getElementById('currentPath').value = currentDir;
-            
-            const tbody = document.getElementById('fileList');
-            if (data.items.length > 0) {
-                tbody.innerHTML = data.items.map(item => `
-                    <tr>
-                        <td>
-                            <span class="file-item" onclick="${item.is_dir ? `loadDirectory('${item.path}')` : `viewFile('${item.path}')`}">
-                                <i class="bi ${item.is_dir ? 'bi-folder-fill text-warning' : 'bi-file-text'} me-2"></i>
-                                ${item.name}
-                            </span>
-                        </td>
-                        <td>${item.is_dir ? '-' : formatBytes(item.size)}</td>
-                        <td>${new Date(item.modified).toLocaleString()}</td>
-                        <td><code>${item.permissions}</code></td>
-                        <td>
-                            ${!item.is_dir ? `
-                                <button class="btn btn-sm btn-outline-info me-1" onclick="viewFile('${item.path}')" title="View/Edit">
-                                    <i class="bi bi-eye"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-success me-1" onclick="downloadFile('${item.path}')" title="Download">
-                                    <i class="bi bi-download"></i>
-                                </button>
-                            ` : ''}
-                            <button class="btn btn-sm btn-outline-danger" onclick="deleteItem('${item.path}', ${item.is_dir})" title="Delete">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </td>
-                    </tr>
-                `).join('');
-            } else {
-                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Empty directory</td></tr>';
-            }
-        } else {
-            showToast(data.error, 'error');
+        let valA, valB;
+        switch (sortColumn) {
+            case 'size':
+                valA = a.size || 0;
+                valB = b.size || 0;
+                break;
+            case 'modified':
+                valA = new Date(a.modified).getTime();
+                valB = new Date(b.modified).getTime();
+                break;
+            default:
+                valA = a.name.toLowerCase();
+                valB = b.name.toLowerCase();
+                return sortAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
         }
-    }
+        return sortAsc ? valA - valB : valB - valA;
+    });
 
-    function goUp() {
-        if (parentDir && parentDir !== currentDir) {
-            loadDirectory(parentDir);
-        }
+    const tbody = document.getElementById('fileList');
+    if (sorted.length > 0) {
+        tbody.innerHTML = sorted.map(item => {
+            const isRunnable = !item.is_dir && (item.name.endsWith('.py') || item.name.endsWith('.js') || item.name.endsWith('.sh') || item.name.endsWith('.ts'));
+            const escapedPath = item.path.replace(/'/g, "\\'");
+            return '<tr><td><span class="file-item" onclick="' + (item.is_dir ? "loadDirectory('" + escapedPath + "')" : "viewFile('" + escapedPath + "')") + '"><i class="bi ' + (item.is_dir ? 'bi-folder-fill text-warning' : getFileIcon(item.name)) + ' me-2"></i>' + item.name + '</span></td><td>' + (item.is_dir ? '-' : formatBytes(item.size)) + '</td><td>' + new Date(item.modified).toLocaleString() + '</td><td><code>' + item.permissions + '</code></td><td>' + (isRunnable ? '<button class="btn btn-sm btn-outline-success me-1" onclick="showRunModal(\'' + escapedPath + '\')" title="Run in Screen"><i class="bi bi-play-fill"></i></button>' : '') + (!item.is_dir ? '<button class="btn btn-sm btn-outline-info me-1" onclick="viewFile(\'' + escapedPath + '\')" title="View/Edit"><i class="bi bi-eye"></i></button><button class="btn btn-sm btn-outline-primary me-1" onclick="downloadFile(\'' + escapedPath + '\')" title="Download"><i class="bi bi-download"></i></button>' : '') + '<button class="btn btn-sm btn-outline-danger" onclick="deleteItem(\'' + escapedPath + '\', ' + item.is_dir + ')" title="Delete"><i class="bi bi-trash"></i></button></td></tr>';
+        }).join('');
+    } else {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Empty directory</td></tr>';
     }
+}
 
-    function goHome() {
-        loadDirectory('/home/ubuntu');
-    }
+function getFileIcon(filename) {
+    if (filename.endsWith('.py')) return 'bi-filetype-py text-info';
+    if (filename.endsWith('.js')) return 'bi-filetype-js text-warning';
+    if (filename.endsWith('.ts')) return 'bi-filetype-tsx text-info';
+    if (filename.endsWith('.sh')) return 'bi-terminal text-success';
+    if (filename.endsWith('.json')) return 'bi-filetype-json text-warning';
+    if (filename.endsWith('.html')) return 'bi-filetype-html text-danger';
+    if (filename.endsWith('.css')) return 'bi-filetype-css text-primary';
+    return 'bi-file-text';
+}
 
-    function navigateTo(path) {
-        loadDirectory(path);
-    }
+function showRunModal(filePath) {
+    const fileName = filePath.split('/').pop();
+    const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
+    const baseName = fileName.replace(/\.[^/.]+$/, '');
+    
+    document.getElementById('runFilePath').value = filePath;
+    document.getElementById('runScreenName').value = baseName;
+    document.getElementById('runWorkDir').value = dirPath;
+    document.getElementById('runCustomCmd').value = '';
+    
+    new bootstrap.Modal(document.getElementById('runModal')).show();
+}
 
-    async function viewFile(path) {
-        const data = await api('/api/files/read', {
-            method: 'POST',
-            body: JSON.stringify({ path })
-        });
-        
-        if (data.success) {
-            editingFile = path;
-            document.getElementById('fileModalTitle').textContent = path.split('/').pop();
-            document.getElementById('fileContent').value = data.content;
-            new bootstrap.Modal(document.getElementById('fileModal')).show();
-        } else {
-            showToast(data.error, 'error');
-        }
-    }
-
-    async function saveFile() {
-        if (!editingFile) return;
-        
-        const content = document.getElementById('fileContent').value;
-        const data = await api('/api/files/write', {
-            method: 'POST',
-            body: JSON.stringify({ path: editingFile, content })
-        });
-        
-        if (data.success) {
-            showToast('File saved successfully', 'success');
-            bootstrap.Modal.getInstance(document.getElementById('fileModal')).hide();
-        } else {
-            showToast(data.error, 'error');
-        }
-    }
-
-    async function deleteItem(path, isDir) {
-        const type = isDir ? 'directory' : 'file';
-        const confirmMsg = isDir 
-            ? `Are you sure you want to delete this directory and all its contents?\n\nPath: ${path}`
-            : `Are you sure you want to delete this file?\n\nPath: ${path}`;
-        
-        if (!confirm(confirmMsg)) return;
-        
-        const data = await api('/api/files/delete', {
-            method: 'POST',
-            body: JSON.stringify({ path })
-        });
-        
-        if (data.success) {
-            showToast(data.message, 'success');
-            loadDirectory(currentDir);
-        } else {
-            showToast(data.error, 'error');
-        }
+async function executeRunInScreen() {
+    const filePath = document.getElementById('runFilePath').value;
+    const screenName = document.getElementById('runScreenName').value || 'script-' + Date.now();
+    const workDir = document.getElementById('runWorkDir').value;
+    const useVenv = document.getElementById('runUseVenv').checked;
+    const installReqs = document.getElementById('runInstallReqs').checked;
+    let customCmd = document.getElementById('runCustomCmd').value;
+    
+    if (!customCmd) {
+        const fileName = filePath.split('/').pop();
+        if (fileName.endsWith('.py')) customCmd = 'python ' + fileName;
+        else if (fileName.endsWith('.js')) customCmd = 'node ' + fileName;
+        else if (fileName.endsWith('.ts')) customCmd = 'npx ts-node ' + fileName;
+        else if (fileName.endsWith('.sh')) customCmd = 'bash ' + fileName;
+        else customCmd = './' + fileName;
     }
     
-    function downloadFile(path) {
-        // Create a temporary link and click it to trigger download
-        const url = `/api/files/download?path=${encodeURIComponent(path)}`;
-        window.location.href = url;
-        showToast('Download started...', 'info');
+    const data = await api('/api/screens/create', {
+        method: 'POST',
+        body: JSON.stringify({ name: screenName, command: customCmd, folder: workDir, use_venv: useVenv, install_requirements: installReqs })
+    });
+    
+    if (data.success) {
+        showToast('Started "' + screenName + '" in screen', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('runModal')).hide();
+    } else {
+        showToast(data.error, 'error');
     }
+}
 
-    // Start at /home/ubuntu by default
+function goUp() {
+    if (parentDir && parentDir !== currentDir) loadDirectory(parentDir);
+}
+
+function goHome() {
     loadDirectory('/home/ubuntu');
+}
+
+function navigateTo(path) {
+    loadDirectory(path);
+}
+
+async function viewFile(path) {
+    const data = await api('/api/files/read', { method: 'POST', body: JSON.stringify({ path }) });
+    if (data.success) {
+        editingFile = path;
+        document.getElementById('fileModalTitle').textContent = path.split('/').pop();
+        document.getElementById('fileContent').value = data.content;
+        new bootstrap.Modal(document.getElementById('fileModal')).show();
+    } else {
+        showToast(data.error, 'error');
+    }
+}
+
+async function saveFile() {
+    if (!editingFile) return;
+    const content = document.getElementById('fileContent').value;
+    const data = await api('/api/files/write', { method: 'POST', body: JSON.stringify({ path: editingFile, content }) });
+    if (data.success) {
+        showToast('File saved successfully', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('fileModal')).hide();
+    } else {
+        showToast(data.error, 'error');
+    }
+}
+
+async function deleteItem(path, isDir) {
+    const confirmMsg = isDir ? 'Delete this directory and all contents?\n\n' + path : 'Delete this file?\n\n' + path;
+    if (!confirm(confirmMsg)) return;
+    const data = await api('/api/files/delete', { method: 'POST', body: JSON.stringify({ path }) });
+    if (data.success) {
+        showToast(data.message, 'success');
+        loadDirectory(currentDir);
+    } else {
+        showToast(data.error, 'error');
+    }
+}
+
+function downloadFile(path) {
+    window.location.href = '/api/files/download?path=' + encodeURIComponent(path);
+    showToast('Download started...', 'info');
+}
+
+loadDirectory('/home/ubuntu');
 </script>
 {% endblock %}

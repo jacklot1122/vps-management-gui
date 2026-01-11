@@ -400,28 +400,6 @@ def get_system_stats():
         return error
     
     try:
-        # Get all stats in one command for efficiency
-        cmd = '''
-        echo "===CPU==="
-        grep -c ^processor /proc/cpuinfo
-        cat /proc/loadavg | awk '{print $1, $2, $3}'
-        top -bn1 | grep "Cpu(s)" | awk '{print $2}'
-        echo "===MEM==="
-        free -b | grep Mem | awk '{print $2, $3, $4}'
-        echo "===DISK==="
-        df -B1 / | tail -1 | awk '{print $2, $3, $4, $5}'
-        echo "===NET==="
-        cat /proc/net/dev | grep -E "eth0|ens" | head -1 | awk '{print $2, $10}'
-        echo "===UPTIME==="
-        uptime -s
-        echo "===PROCS==="
-        ps aux | wc -l
-        '''
-        result = ssh_manager.execute(cmd)
-        output = result['stdout']
-        
-        # Parse the output
-        sections = output.split('===')
         stats = {
             'cpu': {'percent': 0, 'count': 1, 'load_avg': [0, 0, 0]},
             'memory': {'total': 0, 'used': 0, 'free': 0, 'percent': 0},
@@ -432,67 +410,89 @@ def get_system_stats():
             'process_count': 0
         }
         
-        for section in sections:
-            lines = section.strip().split('\n')
-            if len(lines) < 2:
-                continue
-            
-            name = lines[0].strip()
-            
-            if name == 'CPU':
-                if len(lines) >= 3:
-                    stats['cpu']['count'] = int(lines[1].strip() or 1)
-                    load_parts = lines[2].strip().split()
-                    stats['cpu']['load_avg'] = [float(x) for x in load_parts[:3]] if len(load_parts) >= 3 else [0, 0, 0]
-                    if len(lines) >= 4 and lines[3].strip():
-                        stats['cpu']['percent'] = float(lines[3].strip().replace(',', '.'))
-            
-            elif name == 'MEM':
-                if len(lines) >= 2:
-                    parts = lines[1].strip().split()
-                    if len(parts) >= 3:
-                        total = int(parts[0])
-                        used = int(parts[1])
-                        free = int(parts[2])
-                        stats['memory'] = {
-                            'total': total,
-                            'used': used,
-                            'free': free,
-                            'percent': round(used / total * 100, 1) if total > 0 else 0
-                        }
-            
-            elif name == 'DISK':
-                if len(lines) >= 2:
-                    parts = lines[1].strip().split()
-                    if len(parts) >= 4:
-                        stats['disk'] = {
-                            'total': int(parts[0]),
-                            'used': int(parts[1]),
-                            'free': int(parts[2]),
-                            'percent': int(parts[3].replace('%', ''))
-                        }
-            
-            elif name == 'NET':
-                if len(lines) >= 2:
-                    parts = lines[1].strip().split()
-                    if len(parts) >= 2:
-                        stats['network']['bytes_recv'] = int(parts[0])
-                        stats['network']['bytes_sent'] = int(parts[1])
-            
-            elif name == 'UPTIME':
-                if len(lines) >= 2:
-                    boot_str = lines[1].strip()
-                    stats['boot_time'] = boot_str
-                    try:
-                        boot_time = datetime.strptime(boot_str, '%Y-%m-%d %H:%M:%S')
-                        uptime = datetime.now() - boot_time
-                        stats['uptime'] = str(uptime).split('.')[0]
-                    except:
-                        stats['uptime'] = 'Unknown'
-            
-            elif name == 'PROCS':
-                if len(lines) >= 2:
-                    stats['process_count'] = int(lines[1].strip() or 0)
+        # CPU count
+        result = ssh_manager.execute('nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo')
+        try:
+            stats['cpu']['count'] = int(result['stdout'].strip())
+        except:
+            stats['cpu']['count'] = 1
+        
+        # Load average
+        result = ssh_manager.execute('cat /proc/loadavg')
+        try:
+            parts = result['stdout'].strip().split()
+            stats['cpu']['load_avg'] = [float(parts[0]), float(parts[1]), float(parts[2])]
+            # Use load avg as rough CPU percent (load / cores * 100, capped at 100)
+            stats['cpu']['percent'] = min(100, round(float(parts[0]) / stats['cpu']['count'] * 100, 1))
+        except:
+            pass
+        
+        # Memory
+        result = ssh_manager.execute('free -b | grep Mem')
+        try:
+            parts = result['stdout'].strip().split()
+            if len(parts) >= 3:
+                total = int(parts[1])
+                used = int(parts[2])
+                stats['memory'] = {
+                    'total': total,
+                    'used': used,
+                    'free': total - used,
+                    'percent': round(used / total * 100, 1) if total > 0 else 0
+                }
+        except:
+            pass
+        
+        # Disk
+        result = ssh_manager.execute('df -B1 / | tail -1')
+        try:
+            parts = result['stdout'].strip().split()
+            if len(parts) >= 5:
+                stats['disk'] = {
+                    'total': int(parts[1]),
+                    'used': int(parts[2]),
+                    'free': int(parts[3]),
+                    'percent': int(parts[4].replace('%', ''))
+                }
+        except:
+            pass
+        
+        # Network - try multiple interface names
+        result = ssh_manager.execute('cat /proc/net/dev | grep -E "eth0|ens|enp" | head -1')
+        try:
+            parts = result['stdout'].strip().split()
+            if len(parts) >= 10:
+                stats['network']['bytes_recv'] = int(parts[1])
+                stats['network']['bytes_sent'] = int(parts[9])
+        except:
+            pass
+        
+        # Uptime
+        result = ssh_manager.execute('uptime -s 2>/dev/null || cat /proc/uptime')
+        try:
+            boot_str = result['stdout'].strip()
+            if ' ' in boot_str and '-' in boot_str:
+                # uptime -s format: 2025-01-10 15:30:00
+                boot_time = datetime.strptime(boot_str, '%Y-%m-%d %H:%M:%S')
+                uptime = datetime.now() - boot_time
+                stats['uptime'] = str(uptime).split('.')[0]
+                stats['boot_time'] = boot_str
+            else:
+                # /proc/uptime format: seconds.fraction
+                uptime_secs = float(boot_str.split()[0])
+                days = int(uptime_secs // 86400)
+                hours = int((uptime_secs % 86400) // 3600)
+                mins = int((uptime_secs % 3600) // 60)
+                stats['uptime'] = f'{days}d {hours}h {mins}m'
+        except:
+            pass
+        
+        # Process count
+        result = ssh_manager.execute('ps aux | wc -l')
+        try:
+            stats['process_count'] = int(result['stdout'].strip()) - 1  # Subtract header
+        except:
+            pass
         
         return jsonify({'success': True, 'stats': stats})
     except Exception as e:

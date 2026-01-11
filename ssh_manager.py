@@ -196,40 +196,62 @@ class SSHManager:
         if not self.connected:
             raise Exception("Not connected to VPS")
         
-        # Build the startup script
-        startup_commands = []
+        # Expand ~ on remote
+        if folder.startswith('~'):
+            result = self.execute(f'echo {folder}')
+            folder = result['stdout'].strip()
         
-        # Change to the folder
-        startup_commands.append(f'cd "{folder}" || exit 1')
+        # Build the startup script - use a temp file for complex scripts
+        script_lines = [
+            '#!/bin/bash',
+            f'cd "{folder}" || exit 1',
+        ]
         
         if use_venv:
-            startup_commands.append('''
-if [ ! -d ".venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv .venv
-fi
-echo "Activating virtual environment..."
-source .venv/bin/activate
-''')
+            script_lines.extend([
+                'if [ ! -d ".venv" ] && [ ! -d "venv" ]; then',
+                '    echo "Creating virtual environment..."',
+                '    python3 -m venv .venv',
+                'fi',
+                'if [ -d ".venv" ]; then',
+                '    echo "Activating .venv..."',
+                '    source .venv/bin/activate',
+                'elif [ -d "venv" ]; then',
+                '    echo "Activating venv..."',
+                '    source venv/bin/activate',
+                'fi',
+            ])
             
             if install_requirements:
-                startup_commands.append('''
-if [ -f "requirements.txt" ]; then
-    echo "Installing requirements..."
-    pip install -r requirements.txt
-fi
-''')
+                script_lines.extend([
+                    'if [ -f "requirements.txt" ]; then',
+                    '    echo "Installing requirements..."',
+                    '    pip install -r requirements.txt',
+                    'fi',
+                ])
         
         if command:
-            startup_commands.append(f'echo "Running: {command}"')
-            startup_commands.append(command)
+            script_lines.append(f'echo "Running: {command}"')
+            script_lines.append(command)
         
-        startup_commands.append('exec bash')
+        # Keep the shell alive after command finishes - this is key for proper detach
+        script_lines.append('echo "Command finished. Press Ctrl+A, D to detach or Ctrl+C to exit."')
+        script_lines.append('exec bash')
         
-        full_script = '\\n'.join(startup_commands)
+        # Write script to temp file
+        script_content = '\n'.join(script_lines)
+        temp_script = f'/tmp/screen_start_{name}.sh'
         
-        # Create the screen
-        result = self.execute(f"screen -dmS {name} bash -c $'{full_script}'")
+        # Upload script
+        self.write_file(temp_script, script_content)
+        self.execute(f'chmod +x {temp_script}')
+        
+        # Create the screen with the script
+        result = self.execute(f'screen -dmS {name} bash {temp_script}')
+        
+        # Clean up script after a delay (screen has started by then)
+        self.execute(f'sleep 1 && rm -f {temp_script} &')
+        
         return result['exit_code'] == 0
     
     def delete_screen(self, screen_id):
