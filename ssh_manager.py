@@ -187,8 +187,14 @@ class SSHManager:
             logger.error("get_screens() called but not connected to VPS")
             raise Exception("Not connected to VPS")
         
+        # Try to list all screens (for current user)
         result = self.execute('screen -ls')
         logger.debug(f"screen -ls raw output: {result['stdout']}")
+        
+        # Also try to find screens for all users if running as root
+        all_screens_result = self.execute('ls -la /run/screen/ 2>/dev/null || echo "no screen dir"')
+        logger.debug(f"Screen directories: {all_screens_result['stdout']}")
+        
         screens = []
         
         for line in result['stdout'].split('\n'):
@@ -262,8 +268,25 @@ class SSHManager:
         
         if command:
             logger.debug(f"Adding command to script: {command}")
+            # Fix commands with unquoted filenames containing special characters
+            # If it looks like "python filename.py" and filename has special chars, quote it
+            import shlex
+            try:
+                parts = shlex.split(command)
+                # Rebuild with proper quoting
+                quoted_parts = []
+                for part in parts:
+                    if any(c in part for c in ' ()[]{}$&;|<>'):
+                        quoted_parts.append(f'"{part}"')
+                    else:
+                        quoted_parts.append(part)
+                safe_command = ' '.join(quoted_parts)
+                logger.debug(f"Safe command: {safe_command}")
+            except:
+                # If shlex fails, try simple quoting of arguments
+                safe_command = command
             script_lines.append(f'echo "Running: {command}"')
-            script_lines.append(command)
+            script_lines.append(safe_command)
         
         # Keep the shell alive after command finishes - this is key for proper detach
         script_lines.append('echo "Command finished. Press Ctrl+A, D to detach or Ctrl+C to exit."')
