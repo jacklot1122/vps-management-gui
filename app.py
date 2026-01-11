@@ -753,6 +753,29 @@ def write_file():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/files/mkdir', methods=['POST'])
+@login_required
+def mkdir():
+    """Create a directory on remote VPS"""
+    data = request.get_json()
+    path = data.get('path', '')
+    
+    if not path:
+        return jsonify({'success': False, 'error': 'Path is required'})
+    
+    error = ensure_vps_connection()
+    if error:
+        return error
+    
+    try:
+        result = ssh_manager.execute(f'mkdir -p "{path}"')
+        if result['exit_code'] == 0:
+            return jsonify({'success': True, 'message': 'Directory created'})
+        else:
+            return jsonify({'success': False, 'error': result['stderr'] or 'Failed to create directory'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/files/delete', methods=['POST'])
 @login_required
 def delete_file():

@@ -40,6 +40,12 @@
             <button class="btn btn-sm btn-outline-secondary" onclick="loadDirectory(currentDir)" title="Refresh">
                 <i class="bi bi-arrow-clockwise"></i>
             </button>
+            <button class="btn btn-sm btn-success" onclick="showUploadModal()" title="Upload File">
+                <i class="bi bi-upload"></i> Upload
+            </button>
+            <button class="btn btn-sm btn-primary" onclick="showNewFolderModal()" title="New Folder">
+                <i class="bi bi-folder-plus"></i> New Folder
+            </button>
         </div>
     </div>
     <div class="card-body">
@@ -132,6 +138,63 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-success" onclick="executeRunInScreen()">
                     <i class="bi bi-play-fill me-1"></i>Run
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Upload File Modal -->
+<div class="modal fade" id="uploadModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Upload File</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label class="form-label">Upload to</label>
+                        <input type="text" class="form-control" id="uploadPath" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Select File</label>
+                        <input type="file" class="form-control" id="uploadFile" name="file" required>
+                    </div>
+                    <div id="uploadProgress" class="progress d-none mb-3">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" onclick="uploadFile()" id="uploadBtn">
+                    <i class="bi bi-upload me-1"></i>Upload
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- New Folder Modal -->
+<div class="modal fade" id="newFolderModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-folder-plus me-2"></i>Create New Folder</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Folder Name</label>
+                    <input type="text" class="form-control" id="newFolderName" placeholder="my-folder" required>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="createFolder()">
+                    <i class="bi bi-folder-plus me-1"></i>Create
                 </button>
             </div>
         </div>
@@ -315,6 +378,96 @@ async function deleteItem(path, isDir) {
 function downloadFile(path) {
     window.location.href = '/api/files/download?path=' + encodeURIComponent(path);
     showToast('Download started...', 'info');
+}
+
+function showUploadModal() {
+    document.getElementById('uploadPath').value = currentDir;
+    document.getElementById('uploadFile').value = '';
+    document.getElementById('uploadProgress').classList.add('d-none');
+    document.getElementById('uploadBtn').disabled = false;
+    new bootstrap.Modal(document.getElementById('uploadModal')).show();
+}
+
+async function uploadFile() {
+    const fileInput = document.getElementById('uploadFile');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        showToast('Please select a file', 'error');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('path', currentDir);
+    
+    const progressBar = document.getElementById('uploadProgress');
+    const progressBarInner = progressBar.querySelector('.progress-bar');
+    const uploadBtn = document.getElementById('uploadBtn');
+    
+    progressBar.classList.remove('d-none');
+    uploadBtn.disabled = true;
+    uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Uploading...';
+    
+    try {
+        const response = await fetch('/api/files/upload', {
+            method: 'POST',
+            body: formData
+            // Note: Don't set Content-Type header - browser will set it with boundary
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showToast('File uploaded successfully: ' + data.filename, 'success');
+            bootstrap.Modal.getInstance(document.getElementById('uploadModal')).hide();
+            loadDirectory(currentDir);
+        } else {
+            showToast(data.error, 'error');
+        }
+    } catch (error) {
+        showToast('Upload failed: ' + error.message, 'error');
+    } finally {
+        uploadBtn.disabled = false;
+        uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload';
+        progressBar.classList.add('d-none');
+    }
+}
+
+function showNewFolderModal() {
+    document.getElementById('newFolderName').value = '';
+    new bootstrap.Modal(document.getElementById('newFolderModal')).show();
+}
+
+async function createFolder() {
+    const folderName = document.getElementById('newFolderName').value.trim();
+    
+    if (!folderName) {
+        showToast('Please enter a folder name', 'error');
+        return;
+    }
+    
+    const fullPath = currentDir + '/' + folderName;
+    
+    try {
+        const response = await fetch('/api/files/mkdir', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: fullPath })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showToast('Folder created: ' + folderName, 'success');
+            bootstrap.Modal.getInstance(document.getElementById('newFolderModal')).hide();
+            loadDirectory(currentDir);
+        } else {
+            showToast(data.error, 'error');
+        }
+    } catch (error) {
+        showToast('Failed to create folder: ' + error.message, 'error');
+    }
 }
 
 loadDirectory('/home/ubuntu');
