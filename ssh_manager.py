@@ -272,7 +272,13 @@ class SSHManager:
         # Write script to temp file
         script_content = '\n'.join(script_lines)
         logger.debug(f"Script content:\\n{script_content}")
-        temp_script = f'/tmp/screen_start_{name}.sh'
+        
+        # Sanitize name for use in filenames and screen names (remove/replace special chars)
+        import re
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+        logger.debug(f"Sanitized screen name: '{name}' -> '{safe_name}'")
+        
+        temp_script = f'/tmp/screen_start_{safe_name}.sh'
         logger.debug(f"Temp script path: {temp_script}")
         
         # Upload script
@@ -285,15 +291,15 @@ class SSHManager:
             raise
         
         logger.debug("Making script executable...")
-        chmod_result = self.execute(f'chmod +x {temp_script}')
+        chmod_result = self.execute(f'chmod +x "{temp_script}"')
         logger.debug(f"chmod result: {chmod_result}")
         
         # Verify script exists
-        verify_result = self.execute(f'cat {temp_script}')
+        verify_result = self.execute(f'cat "{temp_script}"')
         logger.debug(f"Script verification: exists={verify_result['exit_code'] == 0}, content_len={len(verify_result['stdout'])}")
         
-        # Create the screen with the script
-        screen_cmd = f'screen -dmS {name} bash {temp_script}'
+        # Create the screen with the script - use sanitized name for screen too
+        screen_cmd = f'screen -dmS "{safe_name}" bash "{temp_script}"'
         logger.info(f"Creating screen with command: {screen_cmd}")
         result = self.execute(screen_cmd)
         logger.info(f"Screen create result: exit_code={result['exit_code']}, stdout={result['stdout']}, stderr={result['stderr']}")
@@ -305,7 +311,7 @@ class SSHManager:
         logger.debug(f"Screens after creation: {verify_screens['stdout']}")
         
         # Clean up script after a delay (screen has started by then)
-        self.execute(f'sleep 1 && rm -f {temp_script} &')
+        self.execute(f'sleep 1 && rm -f "{temp_script}" &')
         
         success = result['exit_code'] == 0
         logger.info(f"create_screen() returning: {success}")
@@ -318,7 +324,7 @@ class SSHManager:
             logger.error("delete_screen() called but not connected to VPS")
             raise Exception("Not connected to VPS")
         
-        result = self.execute(f'screen -S {screen_id} -X quit')
+        result = self.execute(f'screen -S "{screen_id}" -X quit')
         logger.debug(f"delete_screen result: exit_code={result['exit_code']}")
         return result['exit_code'] == 0
     
@@ -329,12 +335,15 @@ class SSHManager:
             logger.error("get_screen_output() called but not connected to VPS")
             raise Exception("Not connected to VPS")
         
-        temp_file = f'/tmp/screen_capture_{screen_id.replace(".", "_")}'
-        self.execute(f'screen -S {screen_id} -X hardcopy {temp_file}')
+        # Sanitize screen_id for use in temp filename
+        import re
+        safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', screen_id)
+        temp_file = f'/tmp/screen_capture_{safe_id}'
+        self.execute(f'screen -S "{screen_id}" -X hardcopy "{temp_file}"')
         
         try:
-            result = self.execute(f'cat {temp_file}')
-            self.execute(f'rm -f {temp_file}')
+            result = self.execute(f'cat "{temp_file}"')
+            self.execute(f'rm -f "{temp_file}"')
             logger.debug(f"get_screen_output() returning {len(result['stdout'])} chars")
             return result['stdout']
         except Exception as e:
@@ -350,7 +359,7 @@ class SSHManager:
         
         # Escape special characters
         escaped_command = command.replace('"', '\\"')
-        result = self.execute(f'screen -S {screen_id} -X stuff "{escaped_command}\\n"')
+        result = self.execute(f'screen -S "{screen_id}" -X stuff "{escaped_command}\\n"')
         return result['exit_code'] == 0
     
     def get_system_stats(self):
