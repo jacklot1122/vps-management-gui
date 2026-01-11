@@ -17,8 +17,8 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
-# Initialize SocketIO
-socketio = SocketIO(app, cors_allowed_origins="*")
+# Initialize SocketIO with eventlet for production
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # Initialize Flask-Login
 login_manager = LoginManager()
@@ -671,11 +671,13 @@ if __name__ == '__main__':
     print("=" * 50)
     print("VPS Management GUI")
     print("=" * 50)
-    print(f"Running on http://0.0.0.0:5000")
     print(f"Default login: admin / changeme")
     print("Set ADMIN_PASSWORD environment variable to change password")
     print("=" * 50)
     
     # Use PORT from environment variable (for Railway/Heroku) or default to 5000
     port = int(os.environ.get('PORT', 5000))
-    socketio.run(app, host='0.0.0.0', port=port, debug=True)
+    debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    
+    print(f"Starting on port {port}...")
+    socketio.run(app, host='0.0.0.0', port=port, debug=debug)
