@@ -8,15 +8,15 @@
 <div class="card">
     <div class="card-header">
         <div class="d-flex align-items-center">
-            <button class="btn btn-sm btn-outline-secondary me-2" onclick="goUp()">
+            <button class="btn btn-sm btn-outline-secondary me-2" onclick="goUp()" title="Go Up">
                 <i class="bi bi-arrow-up"></i>
             </button>
-            <button class="btn btn-sm btn-outline-secondary me-2" onclick="goHome()">
+            <button class="btn btn-sm btn-outline-secondary me-2" onclick="goHome()" title="Go Home">
                 <i class="bi bi-house"></i>
             </button>
-            <input type="text" class="form-control form-control-sm bg-dark text-white" id="currentPath" 
-                   onkeypress="if(event.key==='Enter') navigateTo(this.value)">
-            <button class="btn btn-sm btn-outline-primary ms-2" onclick="navigateTo(document.getElementById('currentPath').value)">
+            <input type="text" class="form-control form-control-sm" id="currentPath" 
+                   onkeypress="if(event.key==='Enter') navigateTo(this.value)" placeholder="Enter path...">
+            <button class="btn btn-sm btn-outline-primary ms-2" onclick="navigateTo(document.getElementById('currentPath').value)" title="Navigate">
                 <i class="bi bi-arrow-right"></i> Go
             </button>
         </div>
@@ -44,13 +44,13 @@
 <!-- View/Edit File Modal -->
 <div class="modal fade" id="fileModal" tabindex="-1">
     <div class="modal-dialog modal-xl">
-        <div class="modal-content bg-dark">
+        <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="fileModalTitle">View File</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <textarea class="form-control bg-dark text-white font-monospace" id="fileContent" 
+                <textarea class="form-control font-monospace" id="fileContent" 
                           rows="20" style="font-size: 0.9rem;"></textarea>
             </div>
             <div class="modal-footer">
@@ -96,11 +96,14 @@
                         <td><code>${item.permissions}</code></td>
                         <td>
                             ${!item.is_dir ? `
-                                <button class="btn btn-sm btn-outline-info me-1" onclick="viewFile('${item.path}')">
+                                <button class="btn btn-sm btn-outline-info me-1" onclick="viewFile('${item.path}')" title="View/Edit">
                                     <i class="bi bi-eye"></i>
                                 </button>
+                                <button class="btn btn-sm btn-outline-success me-1" onclick="downloadFile('${item.path}')" title="Download">
+                                    <i class="bi bi-download"></i>
+                                </button>
                             ` : ''}
-                            <button class="btn btn-sm btn-outline-danger" onclick="deleteItem('${item.path}', ${item.is_dir})">
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteItem('${item.path}', ${item.is_dir})" title="Delete">
                                 <i class="bi bi-trash"></i>
                             </button>
                         </td>
@@ -163,7 +166,11 @@
 
     async function deleteItem(path, isDir) {
         const type = isDir ? 'directory' : 'file';
-        if (!confirm(`Are you sure you want to delete this ${type}?`)) return;
+        const confirmMsg = isDir 
+            ? `Are you sure you want to delete this directory and all its contents?\n\nPath: ${path}`
+            : `Are you sure you want to delete this file?\n\nPath: ${path}`;
+        
+        if (!confirm(confirmMsg)) return;
         
         const data = await api('/api/files/delete', {
             method: 'POST',
@@ -176,6 +183,13 @@
         } else {
             showToast(data.error, 'error');
         }
+    }
+    
+    function downloadFile(path) {
+        // Create a temporary link and click it to trigger download
+        const url = `/api/files/download?path=${encodeURIComponent(path)}`;
+        window.location.href = url;
+        showToast('Download started...', 'info');
     }
 
     loadDirectory('~');

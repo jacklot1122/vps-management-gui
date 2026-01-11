@@ -8,18 +8,18 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
     <style>
         :root {
-            --primary-color: #6366f1;
-            --primary-hover: #818cf8;
-            --dark-bg: #0f172a;
-            --sidebar-bg: #1e293b;
-            --card-bg: #1e293b;
-            --card-border: #334155;
-            --text-primary: #f1f5f9;
-            --text-secondary: #94a3b8;
+            --primary-color: #8b5cf6;
+            --primary-hover: #a78bfa;
+            --dark-bg: #0a0a0f;
+            --sidebar-bg: #16161f;
+            --card-bg: #1a1a24;
+            --card-border: #2d2d3d;
+            --text-primary: #e5e7eb;
+            --text-secondary: #9ca3af;
             --success: #10b981;
             --warning: #f59e0b;
             --danger: #ef4444;
-            --info: #3b82f6;
+            --info: #06b6d4;
         }
         
         body {
@@ -30,7 +30,7 @@
         }
         
         .sidebar {
-            background-color: var(--sidebar-bg);
+            background: linear-gradient(180deg, var(--sidebar-bg) 0%, #0f0f18 100%);
             min-height: 100vh;
             width: 260px;
             position: fixed;
@@ -38,6 +38,7 @@
             top: 0;
             padding-top: 1rem;
             border-right: 1px solid var(--card-border);
+            box-shadow: 2px 0 10px rgba(0,0,0,0.3);
         }
         
         .sidebar .nav-link {
@@ -51,7 +52,7 @@
         .sidebar .nav-link:hover,
         .sidebar .nav-link.active {
             color: var(--text-primary);
-            background: linear-gradient(90deg, rgba(99, 102, 241, 0.15) 0%, transparent 100%);
+            background: linear-gradient(90deg, rgba(139, 92, 246, 0.2) 0%, transparent 100%);
             border-left-color: var(--primary-color);
         }
         
@@ -71,11 +72,11 @@
             background-color: var(--card-bg);
             border: 1px solid var(--card-border);
             border-radius: 12px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
         }
         
         .card-header {
-            background-color: transparent;
+            background-color: rgba(139, 92, 246, 0.1);
             border-bottom: 1px solid var(--card-border);
             font-weight: 600;
             color: var(--text-primary);
@@ -112,25 +113,28 @@
         
         .table {
             color: var(--text-primary);
+            margin-bottom: 0;
         }
         
         .table thead th {
-            border-bottom: 1px solid var(--card-border);
-            color: var(--text-secondary);
+            border-bottom: 2px solid var(--card-border);
+            color: var(--text-primary);
             font-weight: 600;
             text-transform: uppercase;
             font-size: 0.75rem;
             letter-spacing: 0.05em;
+            background-color: rgba(139, 92, 246, 0.05);
         }
         
         .table td, .table th {
             border-color: var(--card-border);
             padding: 0.875rem;
             vertical-align: middle;
+            color: var(--text-primary);
         }
         
         .table-hover tbody tr:hover {
-            background-color: rgba(99, 102, 241, 0.1);
+            background-color: rgba(139, 92, 246, 0.15);
         }
         
         .btn-action {
@@ -141,20 +145,99 @@
         .btn-primary {
             background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-hover) 100%);
             border: none;
+            color: #ffffff;
         }
         
         .btn-primary:hover {
             background: linear-gradient(135deg, var(--primary-hover) 0%, var(--primary-color) 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(139, 92, 246, 0.4);
         }
         
         .btn-outline-primary {
             color: var(--primary-color);
             border-color: var(--primary-color);
+            background: transparent;
         }
         
         .btn-outline-primary:hover {
             background-color: var(--primary-color);
             border-color: var(--primary-color);
+            color: #ffffff;
+        }
+        
+        .btn-outline-secondary {
+            color: var(--text-secondary);
+            border-color: var(--card-border);
+            background: transparent;
+        }
+        
+        .btn-outline-secondary:hover {
+            background-color: var(--card-border);
+            border-color: var(--text-secondary);
+            color: var(--text-primary);
+        }
+        
+        .btn-outline-info {
+            color: var(--info);
+            border-color: var(--info);
+            background: transparent;
+        }
+        
+        .btn-outline-info:hover {
+            background-color: var(--info);
+            border-color: var(--info);
+            color: #ffffff;
+        }
+        
+        .btn-outline-success {
+            color: var(--success);
+            border-color: var(--success);
+            background: transparent;
+        }
+        
+        .btn-outline-success:hover {
+            background-color: var(--success);
+            border-color: var(--success);
+            color: #ffffff;
+        }
+        
+        .btn-outline-danger {
+            color: var(--danger);
+            border-color: var(--danger);
+            background: transparent;
+        }
+        
+        .btn-outline-danger:hover {
+            background-color: var(--danger);
+            border-color: var(--danger);
+            color: #ffffff;
+        }
+        
+        .form-control {
+            background-color: var(--card-bg);
+            border: 1px solid var(--card-border);
+            color: var(--text-primary);
+        }
+        
+        .form-control:focus {
+            background-color: var(--card-bg);
+            border-color: var(--primary-color);
+            color: var(--text-primary);
+            box-shadow: 0 0 0 0.2rem rgba(139, 92, 246, 0.25);
+        }
+        
+        .form-control::placeholder {
+            color: var(--text-secondary);
+            opacity: 0.7;
+        }
+        
+        .bg-dark {
+            background-color: var(--card-bg) !important;
+        }
+        
+        .text-white {
+            color: var(--text-primary) !important;
         }
         
         .terminal-output {
@@ -189,10 +272,13 @@
             padding: 0.625rem 0.875rem;
             border-radius: 8px;
             transition: all 0.2s ease;
+            display: inline-block;
+            color: var(--text-primary);
         }
         
         .file-item:hover {
-            background-color: rgba(99, 102, 241, 0.15);
+            background-color: rgba(139, 92, 246, 0.2);
+            transform: translateX(4px);
         }
         
         .brand {
@@ -258,6 +344,31 @@
         
         ::-webkit-scrollbar-thumb:hover {
             background: var(--text-secondary);
+        }
+        
+        .modal-content {
+            background-color: var(--card-bg);
+            border: 1px solid var(--card-border);
+            color: var(--text-primary);
+        }
+        
+        .modal-header {
+            border-bottom: 1px solid var(--card-border);
+        }
+        
+        .modal-footer {
+            border-top: 1px solid var(--card-border);
+        }
+        
+        .btn-close-white {
+            filter: brightness(0) invert(1);
+        }
+        
+        code {
+            background-color: rgba(139, 92, 246, 0.1);
+            color: var(--primary-hover);
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
         }
         
         @media (max-width: 768px) {

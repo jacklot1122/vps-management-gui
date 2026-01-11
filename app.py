@@ -574,10 +574,29 @@ def delete_file():
     
     try:
         if os.path.isdir(path):
-            os.rmdir(path)
+            import shutil
+            shutil.rmtree(path)  # Delete directory and all contents
         else:
             os.remove(path)
         return jsonify({'success': True, 'message': 'Deleted successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/files/download', methods=['GET'])
+@login_required
+def download_file():
+    """Download a file"""
+    from flask import send_file
+    path = request.args.get('path', '')
+    
+    try:
+        if not os.path.exists(path):
+            return jsonify({'success': False, 'error': 'File not found'})
+        
+        if os.path.isdir(path):
+            return jsonify({'success': False, 'error': 'Cannot download directories'})
+        
+        return send_file(path, as_attachment=True, download_name=os.path.basename(path))
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
