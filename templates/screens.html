@@ -33,7 +33,7 @@
 <!-- Create Screen Modal -->
 <div class="modal fade" id="createScreenModal" tabindex="-1">
     <div class="modal-dialog">
-        <div class="modal-content bg-dark">
+        <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Create New Screen Session</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -41,11 +41,11 @@
             <div class="modal-body">
                 <div class="mb-3">
                     <label class="form-label">Session Name</label>
-                    <input type="text" class="form-control bg-dark text-white" id="screenName" placeholder="my_session">
+                    <input type="text" class="form-control" id="screenName" placeholder="my_session">
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Command (optional)</label>
-                    <input type="text" class="form-control bg-dark text-white" id="screenCommand" placeholder="e.g., python script.py">
+                    <input type="text" class="form-control" id="screenCommand" placeholder="e.g., python script.py">
                     <small class="text-muted">Leave empty to start an empty bash session</small>
                 </div>
             </div>
@@ -60,7 +60,7 @@
 <!-- View Screen Output Modal -->
 <div class="modal fade" id="viewOutputModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
-        <div class="modal-content bg-dark">
+        <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Screen Output: <span id="outputScreenName"></span></h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -69,13 +69,13 @@
                 <div class="terminal-output" id="screenOutput">Loading...</div>
                 <div class="mt-3">
                     <div class="input-group">
-                        <input type="text" class="form-control bg-dark text-white" id="sendCommand" placeholder="Type command to send...">
+                        <input type="text" class="form-control" id="sendCommand" placeholder="Type command to send...">
                         <button class="btn btn-primary" onclick="sendCommand()">Send</button>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-info" onclick="refreshOutput()">
+                <button type="button" class="btn btn-outline-info" onclick="refreshOutput()">
                     <i class="bi bi-arrow-clockwise me-1"></i>Refresh
                 </button>
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
