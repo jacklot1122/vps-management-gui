@@ -20,8 +20,11 @@
                 </button>
             </div>
             <div class="btn-group me-2">
-                <button class="btn btn-sm btn-outline-info" onclick="navigateTo('~')" title="Home">
-                    <i class="bi bi-house-door"></i> Home
+                <button class="btn btn-sm btn-outline-info" onclick="navigateTo('/home/ubuntu')" title="Ubuntu Home">
+                    <i class="bi bi-house-door"></i> Ubuntu
+                </button>
+                <button class="btn btn-sm btn-outline-info" onclick="navigateTo('/root')" title="Root Home">
+                    <i class="bi bi-person"></i> Root
                 </button>
                 <button class="btn btn-sm btn-outline-info" onclick="navigateTo('/var/log')" title="Logs">
                     <i class="bi bi-file-text"></i> Logs
@@ -145,7 +148,7 @@
     }
 
     function goHome() {
-        loadDirectory('~');
+        loadDirectory('/home/ubuntu');
     }
 
     function navigateTo(path) {
@@ -213,7 +216,7 @@
         showToast('Download started...', 'info');
     }
 
-    // Start at home directory by default
-    loadDirectory('~');
+    // Start at /home/ubuntu by default
+    loadDirectory('/home/ubuntu');
 </script>
 {% endblock %}
