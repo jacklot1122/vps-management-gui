@@ -42,7 +42,7 @@ class SSHManager:
             logger.debug(f"Connection check failed: {e}")
             return False
     
-    def _ensure_connected(self):
+    def ensure_connected(self):
         """Ensure we have a valid connection, reconnect if needed"""
         if not self._is_connection_alive():
             if self.host and self.username:
@@ -138,7 +138,7 @@ class SSHManager:
         with self._lock:
             for attempt in range(retries + 1):
                 try:
-                    if not self._ensure_connected():
+                    if not self.ensure_connected():
                         raise Exception("Not connected to VPS")
                     
                     self._last_activity = time.time()
