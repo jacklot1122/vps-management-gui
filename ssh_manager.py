@@ -2,8 +2,12 @@
 SSH Manager - Handles SSH connections to remote VPS
 """
 import paramiko
+from paramiko import SSHException
 import os
 import logging
+import time
+import threading
+import socket
 from io import StringIO
 
 # Configure logging for SSH Manager
@@ -16,14 +20,68 @@ class SSHManager:
         self.connected = False
         self.host = None
         self.username = None
+        self.password = None
+        self.key_path = None
+        self.key_string = None
+        self.port = 22
+        self._lock = threading.Lock()
+        self._last_activity = time.time()
+        
+    def _is_connection_alive(self):
+        """Check if the SSH connection is still alive"""
+        if not self.client or not self.connected:
+            return False
+        try:
+            transport = self.client.get_transport()
+            if transport is None or not transport.is_active():
+                return False
+            # Send a keepalive to check connection
+            transport.send_ignore()
+            return True
+        except Exception as e:
+            logger.debug(f"Connection check failed: {e}")
+            return False
+    
+    def _ensure_connected(self):
+        """Ensure we have a valid connection, reconnect if needed"""
+        if not self._is_connection_alive():
+            if self.host and self.username:
+                logger.info("Connection lost, attempting to reconnect...")
+                try:
+                    self.disconnect()
+                    self.connect(
+                        self.host, 
+                        self.username, 
+                        password=self.password,
+                        key_path=self.key_path,
+                        key_string=self.key_string,
+                        port=self.port
+                    )
+                    return True
+                except Exception as e:
+                    logger.error(f"Reconnection failed: {e}")
+                    return False
+            return False
+        return True
         
     def connect(self, host, username, password=None, key_path=None, key_string=None, port=22):
         """Connect to remote VPS via SSH"""
         logger.info(f"SSH connect attempt: host={host}, username={username}, port={port}")
         logger.debug(f"Auth methods: password={'YES' if password else 'NO'}, key_path={'YES' if key_path else 'NO'}, key_string={'YES' if key_string else 'NO'}")
+        
+        # Store credentials for reconnection
+        self.host = host
+        self.username = username
+        self.password = password
+        self.key_path = key_path
+        self.key_string = key_string
+        self.port = port
+        
         try:
             self.client = paramiko.SSHClient()
             self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            # Set keepalive to prevent connection drops
             
             # Handle different authentication methods
             if key_string:
@@ -31,23 +89,30 @@ class SSHManager:
                 logger.debug("Using SSH key from string")
                 key_file = StringIO(key_string)
                 pkey = paramiko.RSAKey.from_private_key(key_file)
-                self.client.connect(host, port=port, username=username, pkey=pkey, timeout=10)
+                self.client.connect(host, port=port, username=username, pkey=pkey, timeout=15, banner_timeout=15)
             elif key_path and os.path.exists(key_path):
                 # SSH key file path
                 logger.debug(f"Using SSH key from file: {key_path}")
-                self.client.connect(host, port=port, username=username, key_filename=key_path, timeout=10)
+                self.client.connect(host, port=port, username=username, key_filename=key_path, timeout=15, banner_timeout=15)
             elif password:
                 # Password authentication
                 logger.debug("Using password authentication")
-                self.client.connect(host, port=port, username=username, password=password, timeout=10)
+                self.client.connect(host, port=port, username=username, password=password, timeout=15, banner_timeout=15)
             else:
                 logger.error("No authentication method provided")
                 raise ValueError("No authentication method provided")
             
+            # Enable keepalive on the transport
+            transport = self.client.get_transport()
+            if transport:
+                transport.set_keepalive(30)  # Send keepalive every 30 seconds
+            
             self.sftp = self.client.open_sftp()
+            # Set longer timeout for SFTP operations
+            self.sftp.get_channel().settimeout(30)
+            
             self.connected = True
-            self.host = host
-            self.username = username
+            self._last_activity = time.time()
             logger.info(f"SSH connected successfully to {host}")
             return True
         except Exception as e:
@@ -57,38 +122,52 @@ class SSHManager:
     
     def disconnect(self):
         """Disconnect from VPS"""
-        if self.sftp:
-            self.sftp.close()
-        if self.client:
-            self.client.close()
+        try:
+            if self.sftp:
+                self.sftp.close()
+            if self.client:
+                self.client.close()
+        except:
+            pass
         self.connected = False
-        self.host = None
-        self.username = None
+        self.client = None
+        self.sftp = None
     
-    def execute(self, command, timeout=30):
-        """Execute a command on the remote VPS"""
-        if not self.connected:
-            logger.error("execute() called but not connected to VPS")
-            raise Exception("Not connected to VPS")
-        
-        logger.debug(f"SSH execute: {command[:100]}{'...' if len(command) > 100 else ''}")
-        stdin, stdout, stderr = self.client.exec_command(command, timeout=timeout)
-        exit_code = stdout.channel.recv_exit_status()
-        
-        stdout_text = stdout.read().decode('utf-8', errors='replace')
-        stderr_text = stderr.read().decode('utf-8', errors='replace')
-        
-        logger.debug(f"SSH execute result: exit_code={exit_code}, stdout={stdout_text[:200] if stdout_text else 'empty'}, stderr={stderr_text[:200] if stderr_text else 'empty'}")
-        
-        return {
-            'stdout': stdout_text,
-            'stderr': stderr_text,
-            'exit_code': exit_code
-        }
+    def execute(self, command, timeout=30, retries=2):
+        """Execute a command on the remote VPS with retry logic"""
+        with self._lock:
+            for attempt in range(retries + 1):
+                try:
+                    if not self._ensure_connected():
+                        raise Exception("Not connected to VPS")
+                    
+                    self._last_activity = time.time()
+                    logger.debug(f"SSH execute: {command[:100]}{'...' if len(command) > 100 else ''}")
+                    stdin, stdout, stderr = self.client.exec_command(command, timeout=timeout)
+                    exit_code = stdout.channel.recv_exit_status()
+                    
+                    stdout_text = stdout.read().decode('utf-8', errors='replace')
+                    stderr_text = stderr.read().decode('utf-8', errors='replace')
+                    
+                    logger.debug(f"SSH execute result: exit_code={exit_code}, stdout={stdout_text[:200] if stdout_text else 'empty'}, stderr={stderr_text[:200] if stderr_text else 'empty'}")
+                    
+                    return {
+                        'stdout': stdout_text,
+                        'stderr': stderr_text,
+                        'exit_code': exit_code
+                    }
+                except Exception as e:
+                    logger.warning(f"Execute attempt {attempt + 1} failed: {e}")
+                    if attempt < retries:
+                        self.connected = False  # Force reconnect
+                        time.sleep(0.5)
+                    else:
+                        raise
     
-    def list_directory(self, path):
-        """List files in a remote directory"""
-        if not self.connected:
+    def list_directory(self, path, retries=2):
+        """List files in a remote directory with retry logic"""
+        # Ensure we're connected before attempting
+        if not self.ensure_connected():
             raise Exception("Not connected to VPS")
         
         # Expand ~ on remote
@@ -96,61 +175,107 @@ class SSHManager:
             result = self.execute(f'echo {path}')
             path = result['stdout'].strip()
         
-        try:
-            items = []
-            for attr in self.sftp.listdir_attr(path):
-                items.append({
-                    'name': attr.filename,
-                    'path': os.path.join(path, attr.filename),
-                    'is_dir': attr.st_mode & 0o40000 == 0o40000,  # S_ISDIR
-                    'size': attr.st_size,
-                    'modified': attr.st_mtime,
-                    'permissions': oct(attr.st_mode)[-3:]
-                })
-            return path, items
-        except FileNotFoundError:
-            raise Exception(f"Path does not exist: {path}")
-        except PermissionError:
-            raise Exception(f"Permission denied: {path}")
+        for attempt in range(retries + 1):
+            try:
+                items = []
+                for attr in self.sftp.listdir_attr(path):
+                    items.append({
+                        'name': attr.filename,
+                        'path': os.path.join(path, attr.filename),
+                        'is_dir': attr.st_mode & 0o40000 == 0o40000,  # S_ISDIR
+                        'size': attr.st_size,
+                        'modified': attr.st_mtime,
+                        'permissions': oct(attr.st_mode)[-3:]
+                    })
+                return path, items
+            except FileNotFoundError:
+                raise Exception(f"Path does not exist: {path}")
+            except PermissionError:
+                raise Exception(f"Permission denied: {path}")
+            except (EOFError, SSHException, socket.error) as e:
+                logger.warning(f"list_directory attempt {attempt + 1} failed: {e}")
+                if attempt < retries:
+                    self.connected = False
+                    if self.ensure_connected():
+                        continue
+                raise Exception(f"Failed to list directory: {e}")
     
-    def read_file(self, path, max_size=1024*1024):
-        """Read a file from the remote VPS"""
-        if not self.connected:
+    def read_file(self, path, max_size=1024*1024, retries=2):
+        """Read a file from the remote VPS with retry logic"""
+        if not self.ensure_connected():
             raise Exception("Not connected to VPS")
         
-        with self.sftp.open(path, 'r') as f:
-            return f.read(max_size)
+        for attempt in range(retries + 1):
+            try:
+                with self.sftp.open(path, 'r') as f:
+                    return f.read(max_size)
+            except (EOFError, SSHException, socket.error) as e:
+                logger.warning(f"read_file attempt {attempt + 1} failed: {e}")
+                if attempt < retries:
+                    self.connected = False
+                    if self.ensure_connected():
+                        continue
+                raise Exception(f"Failed to read file: {e}")
     
-    def write_file(self, path, content):
-        """Write content to a file on the remote VPS"""
-        if not self.connected:
+    def write_file(self, path, content, retries=2):
+        """Write content to a file on the remote VPS with retry logic"""
+        if not self.ensure_connected():
             raise Exception("Not connected to VPS")
         
-        with self.sftp.open(path, 'w') as f:
-            f.write(content)
+        for attempt in range(retries + 1):
+            try:
+                with self.sftp.open(path, 'w') as f:
+                    f.write(content)
+                return
+            except (EOFError, SSHException, socket.error) as e:
+                logger.warning(f"write_file attempt {attempt + 1} failed: {e}")
+                if attempt < retries:
+                    self.connected = False
+                    if self.ensure_connected():
+                        continue
+                raise Exception(f"Failed to write file: {e}")
     
-    def upload_file(self, local_path_or_data, remote_path, is_data=False):
-        """Upload a file to the remote VPS"""
-        if not self.connected:
+    def upload_file(self, local_path_or_data, remote_path, is_data=False, retries=2):
+        """Upload a file to the remote VPS with retry logic"""
+        if not self.ensure_connected():
             raise Exception("Not connected to VPS")
         
-        if is_data:
-            with self.sftp.open(remote_path, 'wb') as f:
-                f.write(local_path_or_data)
-        else:
-            self.sftp.put(local_path_or_data, remote_path)
+        for attempt in range(retries + 1):
+            try:
+                if is_data:
+                    with self.sftp.open(remote_path, 'wb') as f:
+                        f.write(local_path_or_data)
+                else:
+                    self.sftp.put(local_path_or_data, remote_path)
+                return
+            except (EOFError, SSHException, socket.error) as e:
+                logger.warning(f"upload_file attempt {attempt + 1} failed: {e}")
+                if attempt < retries:
+                    self.connected = False
+                    if self.ensure_connected():
+                        continue
+                raise Exception(f"Failed to upload file: {e}")
     
-    def download_file(self, remote_path):
-        """Download a file from the remote VPS"""
-        if not self.connected:
+    def download_file(self, remote_path, retries=2):
+        """Download a file from the remote VPS with retry logic"""
+        if not self.ensure_connected():
             raise Exception("Not connected to VPS")
         
-        with self.sftp.open(remote_path, 'rb') as f:
-            return f.read()
+        for attempt in range(retries + 1):
+            try:
+                with self.sftp.open(remote_path, 'rb') as f:
+                    return f.read()
+            except (EOFError, SSHException, socket.error) as e:
+                logger.warning(f"download_file attempt {attempt + 1} failed: {e}")
+                if attempt < retries:
+                    self.connected = False
+                    if self.ensure_connected():
+                        continue
+                raise Exception(f"Failed to download file: {e}")
     
-    def delete(self, path, is_dir=False):
-        """Delete a file or directory on the remote VPS"""
-        if not self.connected:
+    def delete(self, path, is_dir=False, retries=2):
+        """Delete a file or directory on the remote VPS with retry logic"""
+        if not self.ensure_connected():
             raise Exception("Not connected to VPS")
         
         if is_dir:
