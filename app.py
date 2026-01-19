@@ -1173,6 +1173,9 @@ def execute_deployment(deployment_id):
         repo_url = deployment['repo_url']
         branch = deployment['branch']
         
+        # Add deploy path to git safe directories to avoid ownership issues
+        ssh_manager.execute(f'git config --global --add safe.directory "{deploy_path}"', timeout=10)
+        
         # Check if directory exists and if it's a git repo
         check_git = ssh_manager.execute(f'test -d "{deploy_path}/.git" && echo "git_exists"', timeout=10)
         check_dir = ssh_manager.execute(f'test -d "{deploy_path}" && echo "dir_exists"', timeout=10)
@@ -1186,14 +1189,24 @@ def execute_deployment(deployment_id):
             if result['stderr'] and 'error' in result['stderr'].lower():
                 log(f"  stderr: {result['stderr']}")
         elif 'dir_exists' in check_dir['stdout']:
-            # Directory exists but not a git repo - initialize git in it
-            log(f"Directory exists, initializing git repo...")
-            init_cmd = f'cd "{deploy_path}" && git init && git remote add origin "{repo_url}" && git fetch origin && git reset --hard origin/{branch}'
-            result = ssh_manager.execute(init_cmd, timeout=120)
+            # Directory exists but not a git repo - backup and re-clone
+            log(f"Directory exists but not a git repo, backing up and cloning...")
+            backup_path = f"{deploy_path}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            ssh_manager.execute(f'mv "{deploy_path}" "{backup_path}"', timeout=30)
+            log(f"  Backed up existing files to {backup_path}")
+            
+            clone_cmd = f'git clone -b {branch} "{repo_url}" "{deploy_path}"'
+            result = ssh_manager.execute(clone_cmd, timeout=300)
             log(f"  {result['stdout'].strip()}")
             if result['exit_code'] != 0:
                 log(f"  ERROR: {result['stderr']}")
-                raise Exception(f"Git init failed: {result['stderr']}")
+                # Restore backup on failure
+                ssh_manager.execute(f'mv "{backup_path}" "{deploy_path}"', timeout=30)
+                raise Exception(f"Clone failed: {result['stderr']}")
+            else:
+                # Remove backup on success
+                ssh_manager.execute(f'rm -rf "{backup_path}"', timeout=30)
+                log(f"  Cloned successfully, removed backup")
         else:
             # Clone repository
             log(f"Cloning repository to {deploy_path}...")
@@ -1333,6 +1346,32 @@ def github_webhook():
     else:
         logger.info("No matching deployments found")
         return jsonify({'success': True, 'message': 'No matching deployments'})
+
+
+@app.route('/local-trigger', methods=['POST'])
+def local_trigger():
+    """Trigger a deployment from a local machine (protected by a secret).
+
+    Expected JSON: { "deployment_id": "<id>", "secret": "<secret>" }
+    Or header: X-LOCAL-SECRET: <secret>
+    """
+    data = request.get_json() or {}
+    # Allow secret in header or JSON
+    secret_header = request.headers.get('X-LOCAL-SECRET')
+    secret_payload = data.get('secret')
+    secret = secret_header or secret_payload
+
+    if not secret or secret != WEBHOOK_SECRET:
+        logger.warning('Local trigger rejected due to bad secret')
+        return jsonify({'success': False, 'error': 'Invalid secret'}), 403
+
+    deployment_id = data.get('deployment_id')
+    if not deployment_id:
+        return jsonify({'success': False, 'error': 'Missing deployment_id'}), 400
+
+    # Execute deployment (reuse existing flow)
+    logger.info(f'Local trigger received for deployment: {deployment_id}')
+    return execute_deployment(deployment_id)
 
 # =============================================================================
 # Main Entry Point
