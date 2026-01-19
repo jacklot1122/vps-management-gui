@@ -95,23 +95,23 @@
                             <label class="form-label">Deploy Path on VPS</label>
                             <div class="input-group">
                                 <input type="text" class="form-control bg-dark text-light" name="deploy_path" 
-                                       id="deployPathInput" placeholder="/root/myproject" required>
+                                       id="deployPathInput" placeholder="/home/ubuntu/myproject" required>
                                 <button type="button" class="btn btn-outline-primary" onclick="openPathBrowser('deployPathInput')">
                                     <i class="bi bi-folder"></i> Browse
                                 </button>
                             </div>
-                            <small class="text-secondary">Where to clone/pull the repository</small>
+                            <small class="text-secondary">Where to clone the repository (e.g., /home/ubuntu/betfair-bot)</small>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Main File to Run</label>
                             <div class="input-group">
                                 <input type="text" class="form-control bg-dark text-light" name="main_file" 
-                                       id="mainFileInput" placeholder="main.py or src/app.py" required>
-                                <button type="button" class="btn btn-outline-primary" onclick="openFileBrowser('mainFileInput')">
+                                       id="mainFileInput" value="main.py" placeholder="main.py" required>
+                                <button type="button" class="btn btn-outline-primary" onclick="openFileBrowserFromDeploy()">
                                     <i class="bi bi-file-earmark"></i> Browse
                                 </button>
                             </div>
-                            <small class="text-secondary">Relative path from deploy path</small>
+                            <small class="text-secondary">File from your repo to run (e.g., main.py, app.py, bot.py)</small>
                         </div>
                     </div>
 
@@ -589,6 +589,19 @@ function openFileBrowser(inputId) {
     // Try to get the deploy path first
     const deployPath = document.getElementById('deployPathInput')?.value || '/home';
     currentBrowserPath = deployPath || '/home';
+    loadBrowserDirectory(currentBrowserPath);
+    new bootstrap.Modal(document.getElementById('pathBrowserModal')).show();
+}
+
+function openFileBrowserFromDeploy() {
+    const deployPath = document.getElementById('deployPathInput')?.value;
+    if (!deployPath) {
+        showToast('Please set the Deploy Path first', 'warning');
+        return;
+    }
+    currentTargetInput = 'mainFileInput';
+    browseForFile = true;
+    currentBrowserPath = deployPath;
     loadBrowserDirectory(currentBrowserPath);
     new bootstrap.Modal(document.getElementById('pathBrowserModal')).show();
 }
