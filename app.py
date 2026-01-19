@@ -1007,8 +1007,9 @@ def handle_stats_request():
 @login_required
 def deployments():
     """GitHub Deployments page"""
-    # Build the webhook URL
+    # Build the webhook URL - force https for production
     webhook_url = request.host_url.rstrip('/') + '/webhook/github'
+    webhook_url = webhook_url.replace('http://', 'https://')
     return render_template('deployments.html', webhook_url=webhook_url)
 
 @app.route('/api/deployments', methods=['GET'])
@@ -1275,10 +1276,15 @@ def execute_deployment(deployment_id):
         save_deployments(deployments)
         return jsonify({'success': False, 'error': str(e), 'log': '\n'.join(log_lines)})
 
-@app.route('/webhook/github', methods=['POST'])
+@app.route('/webhook/github', methods=['POST', 'GET'])
+@app.route('/webhook/github/', methods=['POST', 'GET'])
 def github_webhook():
     """Handle GitHub webhook for auto-deploy"""
     logger.info("Received GitHub webhook")
+    
+    # Handle GET request (for testing)
+    if request.method == 'GET':
+        return jsonify({'status': 'Webhook endpoint active', 'method': 'Use POST to trigger'})
     
     # Get the payload
     payload = request.get_json()
