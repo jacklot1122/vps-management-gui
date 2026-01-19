@@ -849,17 +849,22 @@ function loadBrowserDirectory(path) {
             const items = data.items || [];
             
             items.forEach(item => {
-                const icon = item.is_dir ? 'bi-folder-fill text-warning' : 'bi-file-earmark text-secondary';
-                const clickAction = item.is_dir 
-                    ? `navigateBrowser('${item.path.replace(/'/g, "\\'")}')`
-                    : (browseForFile ? `selectBrowserItem('${item.name.replace(/'/g, "\\'")}')` : '');
-                const selectable = item.is_dir || browseForFile;
+                // Defensive checks for item properties
+                const itemName = item.name || 'unknown';
+                const itemPath = item.path || currentBrowserPath + '/' + itemName;
+                const isDir = item.is_dir === true;
+                
+                const icon = isDir ? 'bi-folder-fill text-warning' : 'bi-file-earmark text-secondary';
+                const clickAction = isDir 
+                    ? `navigateBrowser('${itemPath.replace(/'/g, "\\'")}')`
+                    : (browseForFile ? `selectBrowserItem('${itemName.replace(/'/g, "\\'")}')` : '');
+                const selectable = isDir || browseForFile;
                 
                 html += `<div class="browser-item ${selectable ? '' : 'text-muted'}" 
                               onclick="${clickAction}" 
-                              ${item.is_dir ? '' : (browseForFile ? `ondblclick="selectBrowserItem('${item.name.replace(/'/g, "\\'")}')"` : '')}>
-                    <i class="bi ${icon} me-2"></i> ${item.name}
-                    ${item.is_dir ? '<i class="bi bi-chevron-right float-end text-muted"></i>' : ''}
+                              ${isDir ? '' : (browseForFile ? `ondblclick="selectBrowserItem('${itemName.replace(/'/g, "\\'")}')"` : '')}>
+                    <i class="bi ${icon} me-2"></i> ${itemName}
+                    ${isDir ? '<i class="bi bi-chevron-right float-end text-muted"></i>' : ''}
                 </div>`;
             });
             

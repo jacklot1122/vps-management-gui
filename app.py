@@ -1413,7 +1413,13 @@ def get_local_deployments():
     """Get all local deployments."""
     try:
         deps = load_local_deployments()
-        return jsonify(deps)
+        # Convert to list with id included in each item
+        deployments_list = []
+        for dep_id, dep_data in deps.items():
+            dep_with_id = dict(dep_data)
+            dep_with_id['id'] = dep_id
+            deployments_list.append(dep_with_id)
+        return jsonify({'deployments': deployments_list})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
