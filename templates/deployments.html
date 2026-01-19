@@ -1,0 +1,561 @@
+{% extends "base.html" %}
+{% block title %}GitHub Deployments - VPS Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-github me-2"></i>GitHub Auto-Deploy</h2>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addDeploymentModal">
+        <i class="bi bi-plus-lg me-1"></i> Add Deployment
+    </button>
+</div>
+
+<!-- Webhook URL Info -->
+<div class="card mb-4">
+    <div class="card-header">
+        <i class="bi bi-link-45deg me-2"></i>Webhook Configuration
+    </div>
+    <div class="card-body">
+        <p class="text-secondary mb-2">Add this webhook URL to your GitHub repository settings:</p>
+        <div class="input-group">
+            <input type="text" class="form-control bg-dark text-light" id="webhookUrl" readonly 
+                   value="{{ webhook_url }}">
+            <button class="btn btn-outline-primary" onclick="copyWebhookUrl()">
+                <i class="bi bi-clipboard"></i> Copy
+            </button>
+        </div>
+        <small class="text-secondary mt-2 d-block">
+            <strong>Setup:</strong> Go to your repo → Settings → Webhooks → Add webhook → 
+            Paste URL → Content type: application/json → Select "Just the push event"
+        </small>
+    </div>
+</div>
+
+<!-- Deployments List -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-list-ul me-2"></i>Configured Deployments</span>
+        <button class="btn btn-sm btn-outline-primary" onclick="loadDeployments()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Repository</th>
+                        <th>Branch</th>
+                        <th>Screen Name</th>
+                        <th>Status</th>
+                        <th>Last Deploy</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="deploymentsTable">
+                    <tr>
+                        <td colspan="6" class="text-center py-4">
+                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                            Loading deployments...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Add Deployment Modal -->
+<div class="modal fade" id="addDeploymentModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Add GitHub Deployment</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="addDeploymentForm">
+                <div class="modal-body">
+                    <!-- Repository Settings -->
+                    <h6 class="text-primary mb-3"><i class="bi bi-github me-2"></i>Repository Settings</h6>
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <label class="form-label">GitHub Repository URL</label>
+                            <input type="text" class="form-control bg-dark text-light" name="repo_url" 
+                                   placeholder="https://github.com/username/repo" required>
+                            <small class="text-secondary">Full URL to your GitHub repository</small>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Branch</label>
+                            <input type="text" class="form-control bg-dark text-light" name="branch" 
+                                   value="main" required>
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Deploy Path on VPS</label>
+                            <input type="text" class="form-control bg-dark text-light" name="deploy_path" 
+                                   placeholder="/root/myproject" required>
+                            <small class="text-secondary">Where to clone/pull the repository</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Main File to Run</label>
+                            <input type="text" class="form-control bg-dark text-light" name="main_file" 
+                                   placeholder="main.py or src/app.py" required>
+                            <small class="text-secondary">Relative path from deploy path</small>
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary my-4">
+
+                    <!-- Screen Settings -->
+                    <h6 class="text-primary mb-3"><i class="bi bi-terminal me-2"></i>Screen Settings</h6>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Screen Name</label>
+                            <input type="text" class="form-control bg-dark text-light" name="screen_name" 
+                                   placeholder="my-app" required>
+                            <small class="text-secondary">Name for the screen session (alphanumeric, -, _)</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Interpreter</label>
+                            <select class="form-select bg-dark text-light" name="interpreter">
+                                <option value="python3">Python 3</option>
+                                <option value="python">Python</option>
+                                <option value="node">Node.js</option>
+                                <option value="bash">Bash Script</option>
+                                <option value="custom">Custom Command</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary my-4">
+
+                    <!-- Environment Settings -->
+                    <h6 class="text-primary mb-3"><i class="bi bi-gear me-2"></i>Environment Settings</h6>
+                    
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="useVenv" name="use_venv">
+                            <label class="form-check-label" for="useVenv">Use Virtual Environment</label>
+                        </div>
+                    </div>
+                    
+                    <div id="venvSettings" style="display: none;">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Virtual Environment Path</label>
+                                <input type="text" class="form-control bg-dark text-light" name="venv_path" 
+                                       placeholder="/root/myproject/venv">
+                                <small class="text-secondary">Path to venv directory</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Or Conda Environment Name</label>
+                                <input type="text" class="form-control bg-dark text-light" name="conda_env" 
+                                       placeholder="myenv">
+                                <small class="text-secondary">Leave empty if using venv</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="installDeps" name="install_deps">
+                            <label class="form-check-label" for="installDeps">Auto-install dependencies on deploy</label>
+                        </div>
+                    </div>
+
+                    <div id="depsSettings" style="display: none;">
+                        <div class="mb-3">
+                            <label class="form-label">Requirements File</label>
+                            <input type="text" class="form-control bg-dark text-light" name="requirements_file" 
+                                   value="requirements.txt" placeholder="requirements.txt">
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary my-4">
+
+                    <!-- Advanced Settings -->
+                    <h6 class="text-primary mb-3"><i class="bi bi-sliders me-2"></i>Advanced Settings</h6>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Pre-deploy Commands (one per line)</label>
+                        <textarea class="form-control bg-dark text-light" name="pre_commands" rows="2" 
+                                  placeholder="cd /root/myproject&#10;git stash"></textarea>
+                        <small class="text-secondary">Commands to run before pulling new code</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Post-deploy Commands (one per line)</label>
+                        <textarea class="form-control bg-dark text-light" name="post_commands" rows="2" 
+                                  placeholder="pip install -r requirements.txt&#10;python migrate.py"></textarea>
+                        <small class="text-secondary">Commands to run after pulling, before starting screen</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Extra Arguments</label>
+                        <input type="text" class="form-control bg-dark text-light" name="extra_args" 
+                               placeholder="--port 8080 --debug">
+                        <small class="text-secondary">Additional arguments to pass to the main file</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Working Directory (optional)</label>
+                        <input type="text" class="form-control bg-dark text-light" name="working_dir" 
+                               placeholder="Leave empty to use deploy path">
+                        <small class="text-secondary">Directory to run the command from</small>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="enabled" name="enabled" checked>
+                        <label class="form-check-label" for="enabled">Enable auto-deploy</label>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-lg me-1"></i> Add Deployment
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Deployment Modal -->
+<div class="modal fade" id="editDeploymentModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Edit Deployment</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="editDeploymentForm">
+                <input type="hidden" name="id" id="editId">
+                <div class="modal-body">
+                    <!-- Same fields as add modal, populated via JS -->
+                    <div id="editFormContent"></div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg me-1"></i> Save Changes
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Deploy Log Modal -->
+<div class="modal fade" id="deployLogModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-journal-text me-2"></i>Deploy Log</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <pre id="deployLogContent" class="bg-black text-light p-3 rounded" style="max-height: 400px; overflow-y: auto;"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Toggle venv settings visibility
+document.getElementById('useVenv').addEventListener('change', function() {
+    document.getElementById('venvSettings').style.display = this.checked ? 'block' : 'none';
+});
+
+document.getElementById('installDeps').addEventListener('change', function() {
+    document.getElementById('depsSettings').style.display = this.checked ? 'block' : 'none';
+});
+
+function copyWebhookUrl() {
+    const input = document.getElementById('webhookUrl');
+    input.select();
+    document.execCommand('copy');
+    showToast('Webhook URL copied to clipboard!', 'success');
+}
+
+function loadDeployments() {
+    fetch('/api/deployments')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('deploymentsTable');
+            if (data.deployments && data.deployments.length > 0) {
+                tbody.innerHTML = data.deployments.map(d => `
+                    <tr>
+                        <td>
+                            <a href="${d.repo_url}" target="_blank" class="text-primary text-decoration-none">
+                                <i class="bi bi-github me-1"></i>${d.repo_url.replace('https://github.com/', '')}
+                            </a>
+                        </td>
+                        <td><span class="badge bg-secondary">${d.branch}</span></td>
+                        <td><code>${d.screen_name}</code></td>
+                        <td>
+                            ${d.enabled 
+                                ? '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Active</span>' 
+                                : '<span class="badge bg-secondary"><i class="bi bi-pause-circle me-1"></i>Paused</span>'}
+                        </td>
+                        <td>
+                            ${d.last_deploy 
+                                ? `<small class="text-secondary">${new Date(d.last_deploy).toLocaleString()}</small>`
+                                : '<small class="text-secondary">Never</small>'}
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-success" onclick="triggerDeploy('${d.id}')" title="Deploy Now">
+                                    <i class="bi bi-rocket"></i>
+                                </button>
+                                <button class="btn btn-outline-info" onclick="viewLog('${d.id}')" title="View Log">
+                                    <i class="bi bi-journal-text"></i>
+                                </button>
+                                <button class="btn btn-outline-primary" onclick="editDeployment('${d.id}')" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="deleteDeployment('${d.id}')" title="Delete">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `).join('');
+            } else {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-secondary">
+                            <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                            No deployments configured. Click "Add Deployment" to get started.
+                        </td>
+                    </tr>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading deployments:', error);
+            showToast('Error loading deployments', 'danger');
+        });
+}
+
+document.getElementById('addDeploymentForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => {
+        if (key === 'use_venv' || key === 'install_deps' || key === 'enabled') {
+            data[key] = true;
+        } else {
+            data[key] = value;
+        }
+    });
+    
+    // Handle checkboxes that aren't checked
+    if (!formData.has('use_venv')) data.use_venv = false;
+    if (!formData.has('install_deps')) data.install_deps = false;
+    if (!formData.has('enabled')) data.enabled = false;
+    
+    fetch('/api/deployments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast('Deployment added successfully!', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('addDeploymentModal')).hide();
+            this.reset();
+            loadDeployments();
+        } else {
+            showToast(result.error || 'Failed to add deployment', 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error adding deployment', 'danger');
+    });
+});
+
+function triggerDeploy(id) {
+    if (!confirm('Trigger deployment now? This will pull latest code and restart the screen.')) return;
+    
+    showToast('Deploying...', 'info');
+    
+    fetch(`/api/deployments/${id}/deploy`, { method: 'POST' })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Deployment triggered successfully!', 'success');
+                loadDeployments();
+            } else {
+                showToast(result.error || 'Deployment failed', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Error triggering deployment', 'danger');
+        });
+}
+
+function viewLog(id) {
+    fetch(`/api/deployments/${id}/log`)
+        .then(response => response.json())
+        .then(result => {
+            document.getElementById('deployLogContent').textContent = result.log || 'No log available';
+            new bootstrap.Modal(document.getElementById('deployLogModal')).show();
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Error loading log', 'danger');
+        });
+}
+
+function editDeployment(id) {
+    fetch(`/api/deployments/${id}`)
+        .then(response => response.json())
+        .then(result => {
+            if (result.deployment) {
+                const d = result.deployment;
+                // Populate edit form (simplified - reuse add form structure)
+                document.getElementById('editId').value = d.id;
+                document.getElementById('editFormContent').innerHTML = `
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <label class="form-label">GitHub Repository URL</label>
+                            <input type="text" class="form-control bg-dark text-light" name="repo_url" value="${d.repo_url}" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Branch</label>
+                            <input type="text" class="form-control bg-dark text-light" name="branch" value="${d.branch}" required>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Deploy Path</label>
+                            <input type="text" class="form-control bg-dark text-light" name="deploy_path" value="${d.deploy_path}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Main File</label>
+                            <input type="text" class="form-control bg-dark text-light" name="main_file" value="${d.main_file}" required>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Screen Name</label>
+                            <input type="text" class="form-control bg-dark text-light" name="screen_name" value="${d.screen_name}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Interpreter</label>
+                            <select class="form-select bg-dark text-light" name="interpreter">
+                                <option value="python3" ${d.interpreter === 'python3' ? 'selected' : ''}>Python 3</option>
+                                <option value="python" ${d.interpreter === 'python' ? 'selected' : ''}>Python</option>
+                                <option value="node" ${d.interpreter === 'node' ? 'selected' : ''}>Node.js</option>
+                                <option value="bash" ${d.interpreter === 'bash' ? 'selected' : ''}>Bash</option>
+                                <option value="custom" ${d.interpreter === 'custom' ? 'selected' : ''}>Custom</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="use_venv" ${d.use_venv ? 'checked' : ''}>
+                            <label class="form-check-label">Use Virtual Environment</label>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Venv Path</label>
+                            <input type="text" class="form-control bg-dark text-light" name="venv_path" value="${d.venv_path || ''}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Conda Env</label>
+                            <input type="text" class="form-control bg-dark text-light" name="conda_env" value="${d.conda_env || ''}">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="install_deps" ${d.install_deps ? 'checked' : ''}>
+                            <label class="form-check-label">Install Dependencies</label>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Requirements File</label>
+                        <input type="text" class="form-control bg-dark text-light" name="requirements_file" value="${d.requirements_file || 'requirements.txt'}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Pre-deploy Commands</label>
+                        <textarea class="form-control bg-dark text-light" name="pre_commands" rows="2">${d.pre_commands || ''}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Post-deploy Commands</label>
+                        <textarea class="form-control bg-dark text-light" name="post_commands" rows="2">${d.post_commands || ''}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Extra Arguments</label>
+                        <input type="text" class="form-control bg-dark text-light" name="extra_args" value="${d.extra_args || ''}">
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" name="enabled" ${d.enabled ? 'checked' : ''}>
+                        <label class="form-check-label">Enabled</label>
+                    </div>
+                `;
+                new bootstrap.Modal(document.getElementById('editDeploymentModal')).show();
+            }
+        });
+}
+
+document.getElementById('editDeploymentForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const id = document.getElementById('editId').value;
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => {
+        if (key === 'use_venv' || key === 'install_deps' || key === 'enabled') {
+            data[key] = true;
+        } else if (key !== 'id') {
+            data[key] = value;
+        }
+    });
+    
+    if (!formData.has('use_venv')) data.use_venv = false;
+    if (!formData.has('install_deps')) data.install_deps = false;
+    if (!formData.has('enabled')) data.enabled = false;
+    
+    fetch(`/api/deployments/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast('Deployment updated!', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('editDeploymentModal')).hide();
+            loadDeployments();
+        } else {
+            showToast(result.error || 'Update failed', 'danger');
+        }
+    });
+});
+
+function deleteDeployment(id) {
+    if (!confirm('Delete this deployment configuration? The screen and files on VPS will not be deleted.')) return;
+    
+    fetch(`/api/deployments/${id}`, { method: 'DELETE' })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Deployment deleted', 'success');
+                loadDeployments();
+            } else {
+                showToast(result.error || 'Delete failed', 'danger');
+            }
+        });
+}
+
+// Load on page load
+document.addEventListener('DOMContentLoaded', loadDeployments);
+</script>
+{% endblock %}

@@ -13,6 +13,11 @@ import subprocess
 import psutil
 import secrets
 import logging
+import json
+import uuid
+import hashlib
+import hmac
+import re
 from datetime import datetime
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
@@ -51,6 +56,34 @@ USERS = {
         'id': '1'
     }
 }
+
+# Deployment storage file path
+DEPLOYMENTS_FILE = os.environ.get('DEPLOYMENTS_FILE', '/tmp/deployments.json')
+WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', secrets.token_hex(16))
+
+def load_deployments():
+    """Load deployments from JSON file"""
+    try:
+        if os.path.exists(DEPLOYMENTS_FILE):
+            with open(DEPLOYMENTS_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading deployments: {e}")
+    return {}
+
+def save_deployments(deployments):
+    """Save deployments to JSON file"""
+    try:
+        with open(DEPLOYMENTS_FILE, 'w') as f:
+            json.dump(deployments, f, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving deployments: {e}")
+        return False
+
+def sanitize_screen_name(name):
+    """Sanitize screen name to only allow safe characters"""
+    return re.sub(r'[^a-zA-Z0-9_-]', '_', name)
 
 class User(UserMixin):
     def __init__(self, username):
@@ -965,6 +998,325 @@ def handle_stats_request():
         })
     except Exception as e:
         emit('error', {'message': str(e)})
+
+# =============================================================================
+# GitHub Auto-Deploy Routes
+# =============================================================================
+
+@app.route('/deployments')
+@login_required
+def deployments():
+    """GitHub Deployments page"""
+    # Build the webhook URL
+    webhook_url = request.host_url.rstrip('/') + '/webhook/github'
+    return render_template('deployments.html', webhook_url=webhook_url)
+
+@app.route('/api/deployments', methods=['GET'])
+@login_required
+def get_deployments():
+    """Get all deployment configurations"""
+    deployments = load_deployments()
+    return jsonify({'success': True, 'deployments': list(deployments.values())})
+
+@app.route('/api/deployments', methods=['POST'])
+@login_required
+def add_deployment():
+    """Add a new deployment configuration"""
+    data = request.get_json()
+    
+    # Validate required fields
+    required = ['repo_url', 'branch', 'deploy_path', 'main_file', 'screen_name']
+    for field in required:
+        if not data.get(field):
+            return jsonify({'success': False, 'error': f'Missing required field: {field}'})
+    
+    # Generate ID
+    deployment_id = str(uuid.uuid4())[:8]
+    
+    # Sanitize screen name
+    data['screen_name'] = sanitize_screen_name(data['screen_name'])
+    
+    # Build deployment config
+    deployment = {
+        'id': deployment_id,
+        'repo_url': data['repo_url'],
+        'branch': data.get('branch', 'main'),
+        'deploy_path': data['deploy_path'],
+        'main_file': data['main_file'],
+        'screen_name': data['screen_name'],
+        'interpreter': data.get('interpreter', 'python3'),
+        'use_venv': data.get('use_venv', False),
+        'venv_path': data.get('venv_path', ''),
+        'conda_env': data.get('conda_env', ''),
+        'install_deps': data.get('install_deps', False),
+        'requirements_file': data.get('requirements_file', 'requirements.txt'),
+        'pre_commands': data.get('pre_commands', ''),
+        'post_commands': data.get('post_commands', ''),
+        'extra_args': data.get('extra_args', ''),
+        'working_dir': data.get('working_dir', ''),
+        'enabled': data.get('enabled', True),
+        'created_at': datetime.now().isoformat(),
+        'last_deploy': None,
+        'last_log': ''
+    }
+    
+    deployments = load_deployments()
+    deployments[deployment_id] = deployment
+    save_deployments(deployments)
+    
+    logger.info(f"Added deployment: {deployment_id} for {data['repo_url']}")
+    return jsonify({'success': True, 'deployment': deployment})
+
+@app.route('/api/deployments/<deployment_id>', methods=['GET'])
+@login_required
+def get_deployment(deployment_id):
+    """Get a single deployment configuration"""
+    deployments = load_deployments()
+    if deployment_id in deployments:
+        return jsonify({'success': True, 'deployment': deployments[deployment_id]})
+    return jsonify({'success': False, 'error': 'Deployment not found'})
+
+@app.route('/api/deployments/<deployment_id>', methods=['PUT'])
+@login_required
+def update_deployment(deployment_id):
+    """Update a deployment configuration"""
+    deployments = load_deployments()
+    if deployment_id not in deployments:
+        return jsonify({'success': False, 'error': 'Deployment not found'})
+    
+    data = request.get_json()
+    deployment = deployments[deployment_id]
+    
+    # Update fields
+    if 'screen_name' in data:
+        data['screen_name'] = sanitize_screen_name(data['screen_name'])
+    
+    for key in ['repo_url', 'branch', 'deploy_path', 'main_file', 'screen_name', 
+                'interpreter', 'use_venv', 'venv_path', 'conda_env', 'install_deps',
+                'requirements_file', 'pre_commands', 'post_commands', 'extra_args',
+                'working_dir', 'enabled']:
+        if key in data:
+            deployment[key] = data[key]
+    
+    deployments[deployment_id] = deployment
+    save_deployments(deployments)
+    
+    return jsonify({'success': True, 'deployment': deployment})
+
+@app.route('/api/deployments/<deployment_id>', methods=['DELETE'])
+@login_required
+def delete_deployment(deployment_id):
+    """Delete a deployment configuration"""
+    deployments = load_deployments()
+    if deployment_id in deployments:
+        del deployments[deployment_id]
+        save_deployments(deployments)
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'error': 'Deployment not found'})
+
+@app.route('/api/deployments/<deployment_id>/log', methods=['GET'])
+@login_required
+def get_deployment_log(deployment_id):
+    """Get the last deployment log"""
+    deployments = load_deployments()
+    if deployment_id in deployments:
+        return jsonify({'success': True, 'log': deployments[deployment_id].get('last_log', '')})
+    return jsonify({'success': False, 'error': 'Deployment not found'})
+
+@app.route('/api/deployments/<deployment_id>/deploy', methods=['POST'])
+@login_required
+def trigger_deployment(deployment_id):
+    """Manually trigger a deployment"""
+    return execute_deployment(deployment_id)
+
+def execute_deployment(deployment_id):
+    """Execute the deployment process"""
+    deployments = load_deployments()
+    if deployment_id not in deployments:
+        return jsonify({'success': False, 'error': 'Deployment not found'})
+    
+    deployment = deployments[deployment_id]
+    log_lines = []
+    
+    def log(msg):
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        line = f"[{timestamp}] {msg}"
+        log_lines.append(line)
+        logger.info(f"Deploy {deployment_id}: {msg}")
+    
+    try:
+        error = ensure_vps_connection()
+        if error:
+            log(f"ERROR: VPS connection failed: {error}")
+            raise Exception(error)
+        
+        log(f"Starting deployment for {deployment['repo_url']}")
+        
+        # 1. Kill existing screen if it exists
+        screen_name = deployment['screen_name']
+        log(f"Stopping existing screen: {screen_name}")
+        ssh_manager.execute(f'screen -X -S "{screen_name}" quit', timeout=10)
+        
+        # 2. Run pre-deploy commands
+        if deployment.get('pre_commands'):
+            log("Running pre-deploy commands...")
+            for cmd in deployment['pre_commands'].strip().split('\n'):
+                if cmd.strip():
+                    log(f"  $ {cmd.strip()}")
+                    result = ssh_manager.execute(cmd.strip(), timeout=60)
+                    if result['stderr']:
+                        log(f"  stderr: {result['stderr']}")
+        
+        # 3. Clone or pull repository
+        deploy_path = deployment['deploy_path']
+        repo_url = deployment['repo_url']
+        branch = deployment['branch']
+        
+        # Check if directory exists
+        check_result = ssh_manager.execute(f'test -d "{deploy_path}/.git" && echo "exists" || echo "new"', timeout=10)
+        
+        if 'exists' in check_result['stdout']:
+            # Pull latest changes
+            log(f"Pulling latest changes from {branch}...")
+            pull_cmd = f'cd "{deploy_path}" && git fetch origin && git reset --hard origin/{branch}'
+            result = ssh_manager.execute(pull_cmd, timeout=120)
+            log(f"  {result['stdout'].strip()}")
+            if result['stderr'] and 'error' in result['stderr'].lower():
+                log(f"  stderr: {result['stderr']}")
+        else:
+            # Clone repository
+            log(f"Cloning repository to {deploy_path}...")
+            clone_cmd = f'git clone -b {branch} "{repo_url}" "{deploy_path}"'
+            result = ssh_manager.execute(clone_cmd, timeout=300)
+            log(f"  {result['stdout'].strip()}")
+            if result['exit_code'] != 0:
+                log(f"  ERROR: {result['stderr']}")
+                raise Exception(f"Clone failed: {result['stderr']}")
+        
+        # 4. Install dependencies if enabled
+        if deployment.get('install_deps'):
+            log("Installing dependencies...")
+            req_file = deployment.get('requirements_file', 'requirements.txt')
+            
+            if deployment.get('use_venv'):
+                if deployment.get('conda_env'):
+                    pip_cmd = f'conda run -n {deployment["conda_env"]} pip install -r "{deploy_path}/{req_file}"'
+                elif deployment.get('venv_path'):
+                    pip_cmd = f'source "{deployment["venv_path"]}/bin/activate" && pip install -r "{deploy_path}/{req_file}"'
+                else:
+                    pip_cmd = f'pip install -r "{deploy_path}/{req_file}"'
+            else:
+                pip_cmd = f'pip install -r "{deploy_path}/{req_file}"'
+            
+            result = ssh_manager.execute(pip_cmd, timeout=300)
+            log(f"  Dependencies installed")
+            if result['stderr'] and 'error' in result['stderr'].lower():
+                log(f"  Warning: {result['stderr'][:200]}")
+        
+        # 5. Run post-deploy commands
+        if deployment.get('post_commands'):
+            log("Running post-deploy commands...")
+            for cmd in deployment['post_commands'].strip().split('\n'):
+                if cmd.strip():
+                    log(f"  $ {cmd.strip()}")
+                    result = ssh_manager.execute(cmd.strip(), timeout=60)
+                    if result['stderr']:
+                        log(f"  stderr: {result['stderr']}")
+        
+        # 6. Build the run command
+        working_dir = deployment.get('working_dir') or deploy_path
+        main_file = deployment['main_file']
+        interpreter = deployment['interpreter']
+        extra_args = deployment.get('extra_args', '')
+        
+        # Build the full command
+        if deployment.get('use_venv'):
+            if deployment.get('conda_env'):
+                run_cmd = f'conda run -n {deployment["conda_env"]} {interpreter} "{main_file}" {extra_args}'
+            elif deployment.get('venv_path'):
+                run_cmd = f'source "{deployment["venv_path"]}/bin/activate" && {interpreter} "{main_file}" {extra_args}'
+            else:
+                run_cmd = f'{interpreter} "{main_file}" {extra_args}'
+        else:
+            run_cmd = f'{interpreter} "{main_file}" {extra_args}'
+        
+        # 7. Start new screen session
+        log(f"Starting screen session: {screen_name}")
+        log(f"  Command: {run_cmd}")
+        
+        # Create the screen with the command
+        screen_cmd = f'cd "{working_dir}" && screen -dmS "{screen_name}" bash -c \'{run_cmd}; exec bash\''
+        result = ssh_manager.execute(screen_cmd, timeout=30)
+        
+        if result['exit_code'] != 0:
+            log(f"  ERROR: Failed to start screen: {result['stderr']}")
+            raise Exception(f"Screen start failed: {result['stderr']}")
+        
+        # Verify screen is running
+        verify_result = ssh_manager.execute('screen -ls', timeout=10)
+        if screen_name in verify_result['stdout']:
+            log(f"SUCCESS: Screen '{screen_name}' is now running!")
+        else:
+            log(f"WARNING: Screen may not have started correctly")
+            log(f"  screen -ls output: {verify_result['stdout']}")
+        
+        # Update deployment record
+        deployment['last_deploy'] = datetime.now().isoformat()
+        deployment['last_log'] = '\n'.join(log_lines)
+        deployments[deployment_id] = deployment
+        save_deployments(deployments)
+        
+        return jsonify({'success': True, 'log': '\n'.join(log_lines)})
+        
+    except Exception as e:
+        log(f"FAILED: {str(e)}")
+        deployment['last_log'] = '\n'.join(log_lines)
+        deployments[deployment_id] = deployment
+        save_deployments(deployments)
+        return jsonify({'success': False, 'error': str(e), 'log': '\n'.join(log_lines)})
+
+@app.route('/webhook/github', methods=['POST'])
+def github_webhook():
+    """Handle GitHub webhook for auto-deploy"""
+    logger.info("Received GitHub webhook")
+    
+    # Get the payload
+    payload = request.get_json()
+    if not payload:
+        return jsonify({'error': 'No payload'}), 400
+    
+    # Extract repo info
+    repo_url = payload.get('repository', {}).get('html_url', '')
+    clone_url = payload.get('repository', {}).get('clone_url', '')
+    ref = payload.get('ref', '')  # e.g., refs/heads/main
+    branch = ref.replace('refs/heads/', '') if ref.startswith('refs/heads/') else ''
+    
+    logger.info(f"Webhook: repo={repo_url}, branch={branch}")
+    
+    if not repo_url or not branch:
+        return jsonify({'error': 'Invalid payload'}), 400
+    
+    # Find matching deployments
+    deployments = load_deployments()
+    triggered = []
+    
+    for dep_id, dep in deployments.items():
+        if not dep.get('enabled'):
+            continue
+        
+        # Match by repo URL (handle both https and git@ formats)
+        dep_repo = dep.get('repo_url', '').rstrip('.git')
+        if repo_url.rstrip('.git') == dep_repo or clone_url.rstrip('.git') == dep_repo:
+            if dep.get('branch', 'main') == branch:
+                logger.info(f"Triggering deployment: {dep_id}")
+                result = execute_deployment(dep_id)
+                triggered.append(dep_id)
+    
+    if triggered:
+        return jsonify({'success': True, 'triggered': triggered})
+    else:
+        logger.info("No matching deployments found")
+        return jsonify({'success': True, 'message': 'No matching deployments'})
 
 # =============================================================================
 # Main Entry Point
