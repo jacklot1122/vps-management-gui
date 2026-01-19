@@ -93,14 +93,24 @@
                     <div class="row mb-3">
                         <div class="col-md-6">
                             <label class="form-label">Deploy Path on VPS</label>
-                            <input type="text" class="form-control bg-dark text-light" name="deploy_path" 
-                                   placeholder="/root/myproject" required>
+                            <div class="input-group">
+                                <input type="text" class="form-control bg-dark text-light" name="deploy_path" 
+                                       id="deployPathInput" placeholder="/root/myproject" required>
+                                <button type="button" class="btn btn-outline-primary" onclick="openPathBrowser('deployPathInput')">
+                                    <i class="bi bi-folder"></i> Browse
+                                </button>
+                            </div>
                             <small class="text-secondary">Where to clone/pull the repository</small>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Main File to Run</label>
-                            <input type="text" class="form-control bg-dark text-light" name="main_file" 
-                                   placeholder="main.py or src/app.py" required>
+                            <div class="input-group">
+                                <input type="text" class="form-control bg-dark text-light" name="main_file" 
+                                       id="mainFileInput" placeholder="main.py or src/app.py" required>
+                                <button type="button" class="btn btn-outline-primary" onclick="openFileBrowser('mainFileInput')">
+                                    <i class="bi bi-file-earmark"></i> Browse
+                                </button>
+                            </div>
                             <small class="text-secondary">Relative path from deploy path</small>
                         </div>
                     </div>
@@ -144,8 +154,13 @@
                         <div class="row mb-3">
                             <div class="col-md-6">
                                 <label class="form-label">Virtual Environment Path</label>
-                                <input type="text" class="form-control bg-dark text-light" name="venv_path" 
-                                       placeholder="/root/myproject/venv">
+                                <div class="input-group">
+                                    <input type="text" class="form-control bg-dark text-light" name="venv_path" 
+                                           id="venvPathInput" placeholder="/root/myproject/venv">
+                                    <button type="button" class="btn btn-outline-primary" onclick="openPathBrowser('venvPathInput')">
+                                        <i class="bi bi-folder"></i>
+                                    </button>
+                                </div>
                                 <small class="text-secondary">Path to venv directory</small>
                             </div>
                             <div class="col-md-6">
@@ -555,7 +570,158 @@ function deleteDeployment(id) {
         });
 }
 
+// File Browser functionality
+let currentBrowserPath = '/';
+let currentTargetInput = null;
+let browseForFile = false;
+
+function openPathBrowser(inputId) {
+    currentTargetInput = inputId;
+    browseForFile = false;
+    currentBrowserPath = '/home';
+    loadBrowserDirectory(currentBrowserPath);
+    new bootstrap.Modal(document.getElementById('pathBrowserModal')).show();
+}
+
+function openFileBrowser(inputId) {
+    currentTargetInput = inputId;
+    browseForFile = true;
+    // Try to get the deploy path first
+    const deployPath = document.getElementById('deployPathInput')?.value || '/home';
+    currentBrowserPath = deployPath || '/home';
+    loadBrowserDirectory(currentBrowserPath);
+    new bootstrap.Modal(document.getElementById('pathBrowserModal')).show();
+}
+
+function loadBrowserDirectory(path) {
+    document.getElementById('browserPath').textContent = path;
+    document.getElementById('browserContent').innerHTML = `
+        <div class="text-center py-4">
+            <div class="spinner-border spinner-border-sm text-primary"></div> Loading...
+        </div>`;
+    
+    fetch(`/api/files?path=${encodeURIComponent(path)}`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                document.getElementById('browserContent').innerHTML = `
+                    <div class="text-danger p-3">${data.error}</div>`;
+                return;
+            }
+            
+            currentBrowserPath = data.current_path;
+            document.getElementById('browserPath').textContent = currentBrowserPath;
+            
+            let html = '';
+            
+            // Parent directory
+            if (currentBrowserPath !== '/') {
+                html += `<div class="browser-item" onclick="navigateBrowser('..')">
+                    <i class="bi bi-arrow-up-circle text-warning me-2"></i> ..
+                </div>`;
+            }
+            
+            // Sort: folders first, then files
+            const items = data.files.sort((a, b) => {
+                if (a.is_dir && !b.is_dir) return -1;
+                if (!a.is_dir && b.is_dir) return 1;
+                return a.name.localeCompare(b.name);
+            });
+            
+            items.forEach(item => {
+                const icon = item.is_dir ? 'bi-folder-fill text-warning' : 'bi-file-earmark text-secondary';
+                const clickAction = item.is_dir 
+                    ? `navigateBrowser('${item.path.replace(/'/g, "\\'")}')`
+                    : (browseForFile ? `selectBrowserItem('${item.name.replace(/'/g, "\\'")}')` : '');
+                const selectable = item.is_dir || browseForFile;
+                
+                html += `<div class="browser-item ${selectable ? '' : 'text-muted'}" 
+                              onclick="${clickAction}" 
+                              ${item.is_dir ? '' : (browseForFile ? `ondblclick="selectBrowserItem('${item.name.replace(/'/g, "\\'")}')"` : '')}>
+                    <i class="bi ${icon} me-2"></i> ${item.name}
+                    ${item.is_dir ? '<i class="bi bi-chevron-right float-end text-muted"></i>' : ''}
+                </div>`;
+            });
+            
+            if (items.length === 0) {
+                html = '<div class="text-muted p-3 text-center">Empty directory</div>';
+            }
+            
+            document.getElementById('browserContent').innerHTML = html;
+        })
+        .catch(err => {
+            document.getElementById('browserContent').innerHTML = `
+                <div class="text-danger p-3">Error: ${err.message}</div>`;
+        });
+}
+
+function navigateBrowser(path) {
+    if (path === '..') {
+        const parts = currentBrowserPath.split('/').filter(p => p);
+        parts.pop();
+        path = '/' + parts.join('/');
+    }
+    loadBrowserDirectory(path);
+}
+
+function selectBrowserItem(filename) {
+    // For files, just use the filename (relative to deploy path)
+    if (browseForFile && currentTargetInput) {
+        document.getElementById(currentTargetInput).value = filename;
+        bootstrap.Modal.getInstance(document.getElementById('pathBrowserModal')).hide();
+    }
+}
+
+function selectCurrentPath() {
+    if (currentTargetInput) {
+        document.getElementById(currentTargetInput).value = currentBrowserPath;
+        bootstrap.Modal.getInstance(document.getElementById('pathBrowserModal')).hide();
+    }
+}
+
 // Load on page load
 document.addEventListener('DOMContentLoaded', loadDeployments);
 </script>
+
+<!-- Path Browser Modal -->
+<div class="modal fade" id="pathBrowserModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-folder me-2"></i>Browse VPS Files</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex align-items-center mb-3 p-2 bg-black rounded">
+                    <i class="bi bi-geo-alt me-2 text-primary"></i>
+                    <code id="browserPath" class="text-light">/</code>
+                </div>
+                <div id="browserContent" class="border border-secondary rounded" 
+                     style="max-height: 400px; overflow-y: auto;">
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="selectCurrentPath()">
+                    <i class="bi bi-check-lg me-1"></i> Select This Folder
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.browser-item {
+    padding: 10px 15px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--card-border);
+    transition: background 0.15s;
+}
+.browser-item:hover {
+    background: rgba(139, 92, 246, 0.15);
+}
+.browser-item:last-child {
+    border-bottom: none;
+}
+</style>
 {% endblock %}

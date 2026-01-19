@@ -1173,17 +1173,27 @@ def execute_deployment(deployment_id):
         repo_url = deployment['repo_url']
         branch = deployment['branch']
         
-        # Check if directory exists
-        check_result = ssh_manager.execute(f'test -d "{deploy_path}/.git" && echo "exists" || echo "new"', timeout=10)
+        # Check if directory exists and if it's a git repo
+        check_git = ssh_manager.execute(f'test -d "{deploy_path}/.git" && echo "git_exists"', timeout=10)
+        check_dir = ssh_manager.execute(f'test -d "{deploy_path}" && echo "dir_exists"', timeout=10)
         
-        if 'exists' in check_result['stdout']:
-            # Pull latest changes
+        if 'git_exists' in check_git['stdout']:
+            # It's a git repo - pull latest changes
             log(f"Pulling latest changes from {branch}...")
             pull_cmd = f'cd "{deploy_path}" && git fetch origin && git reset --hard origin/{branch}'
             result = ssh_manager.execute(pull_cmd, timeout=120)
             log(f"  {result['stdout'].strip()}")
             if result['stderr'] and 'error' in result['stderr'].lower():
                 log(f"  stderr: {result['stderr']}")
+        elif 'dir_exists' in check_dir['stdout']:
+            # Directory exists but not a git repo - initialize git in it
+            log(f"Directory exists, initializing git repo...")
+            init_cmd = f'cd "{deploy_path}" && git init && git remote add origin "{repo_url}" && git fetch origin && git reset --hard origin/{branch}'
+            result = ssh_manager.execute(init_cmd, timeout=120)
+            log(f"  {result['stdout'].strip()}")
+            if result['exit_code'] != 0:
+                log(f"  ERROR: {result['stderr']}")
+                raise Exception(f"Git init failed: {result['stderr']}")
         else:
             # Clone repository
             log(f"Cloning repository to {deploy_path}...")
