@@ -600,7 +600,11 @@ function loadBrowserDirectory(path) {
             <div class="spinner-border spinner-border-sm text-primary"></div> Loading...
         </div>`;
     
-    fetch(`/api/files?path=${encodeURIComponent(path)}`)
+    fetch('/api/files/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: path })
+    })
         .then(r => r.json())
         .then(data => {
             if (!data.success) {
