@@ -613,7 +613,7 @@ function loadBrowserDirectory(path) {
                 return;
             }
             
-            currentBrowserPath = data.current_path;
+            currentBrowserPath = data.path;
             document.getElementById('browserPath').textContent = currentBrowserPath;
             
             let html = '';
@@ -625,12 +625,8 @@ function loadBrowserDirectory(path) {
                 </div>`;
             }
             
-            // Sort: folders first, then files
-            const items = data.files.sort((a, b) => {
-                if (a.is_dir && !b.is_dir) return -1;
-                if (!a.is_dir && b.is_dir) return 1;
-                return a.name.localeCompare(b.name);
-            });
+            // Items are already sorted by the API
+            const items = data.items || [];
             
             items.forEach(item => {
                 const icon = item.is_dir ? 'bi-folder-fill text-warning' : 'bi-file-earmark text-secondary';
