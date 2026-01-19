@@ -1,70 +1,147 @@
 {% extends "base.html" %}
-{% block title %}GitHub Deployments - VPS Manager{% endblock %}
+{% block title %}Deployments - VPS Manager{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2><i class="bi bi-github me-2"></i>GitHub Auto-Deploy</h2>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addDeploymentModal">
-        <i class="bi bi-plus-lg me-1"></i> Add Deployment
-    </button>
-</div>
-
-<!-- Webhook URL Info -->
-<div class="card mb-4">
-    <div class="card-header">
-        <i class="bi bi-link-45deg me-2"></i>Webhook Configuration
-    </div>
-    <div class="card-body">
-        <p class="text-secondary mb-2">Add this webhook URL to your GitHub repository settings:</p>
-        <div class="input-group">
-            <input type="text" class="form-control bg-dark text-light" id="webhookUrl" readonly 
-                   value="{{ webhook_url }}">
-            <button class="btn btn-outline-primary" onclick="copyWebhookUrl()">
-                <i class="bi bi-clipboard"></i> Copy
-            </button>
-        </div>
-        <small class="text-secondary mt-2 d-block">
-            <strong>Setup:</strong> Go to your repo → Settings → Webhooks → Add webhook → 
-            Paste URL → Content type: application/json → Select "Just the push event"
-        </small>
-    </div>
-</div>
-
-<!-- Deployments List -->
-<div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-list-ul me-2"></i>Configured Deployments</span>
-        <button class="btn btn-sm btn-outline-primary" onclick="loadDeployments()">
-            <i class="bi bi-arrow-clockwise"></i> Refresh
+    <h2><i class="bi bi-rocket me-2"></i>Deployments</h2>
+    <div>
+        <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#addLocalDeployModal">
+            <i class="bi bi-laptop me-1"></i> Add Local Deploy
+        </button>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addDeploymentModal">
+            <i class="bi bi-github me-1"></i> Add GitHub Deploy
         </button>
     </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0">
-                <thead>
-                    <tr>
-                        <th>Repository</th>
-                        <th>Branch</th>
-                        <th>Screen Name</th>
-                        <th>Status</th>
-                        <th>Last Deploy</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="deploymentsTable">
-                    <tr>
-                        <td colspan="6" class="text-center py-4">
-                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                            Loading deployments...
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
+</div>
+
+<!-- Tabs -->
+<ul class="nav nav-tabs mb-4" id="deployTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="github-tab" data-bs-toggle="tab" data-bs-target="#github-content" type="button">
+            <i class="bi bi-github me-1"></i> GitHub Deployments
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="local-tab" data-bs-toggle="tab" data-bs-target="#local-content" type="button">
+            <i class="bi bi-laptop me-1"></i> Local Deployments
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content" id="deployTabsContent">
+    <!-- GitHub Deployments Tab -->
+    <div class="tab-pane fade show active" id="github-content" role="tabpanel">
+        <!-- Webhook URL Info -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-link-45deg me-2"></i>Webhook Configuration
+            </div>
+            <div class="card-body">
+                <p class="text-secondary mb-2">Add this webhook URL to your GitHub repository settings:</p>
+                <div class="input-group">
+                    <input type="text" class="form-control bg-dark text-light" id="webhookUrl" readonly 
+                           value="{{ webhook_url }}">
+                    <button class="btn btn-outline-primary" onclick="copyWebhookUrl()">
+                        <i class="bi bi-clipboard"></i> Copy
+                    </button>
+                </div>
+                <small class="text-secondary mt-2 d-block">
+                    <strong>Setup:</strong> Go to your repo → Settings → Webhooks → Add webhook → 
+                    Paste URL → Content type: application/json → Select "Just the push event"
+                </small>
+            </div>
+        </div>
+
+        <!-- GitHub Deployments List -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-list-ul me-2"></i>GitHub Deployments</span>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadDeployments()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Repository</th>
+                                <th>Branch</th>
+                                <th>Screen Name</th>
+                                <th>Status</th>
+                                <th>Last Deploy</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="deploymentsTable">
+                            <tr>
+                                <td colspan="6" class="text-center py-4">
+                                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                                    Loading deployments...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Local Deployments Tab -->
+    <div class="tab-pane fade" id="local-content" role="tabpanel">
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-info-circle me-2"></i>How Local Deploy Works
+            </div>
+            <div class="card-body">
+                <p class="text-secondary">
+                    Local deployments let you push files <strong>directly from your laptop to your VPS</strong> without using GitHub.
+                    This is perfect for projects with secrets, API keys, or config files you don't want on GitHub.
+                </p>
+                <ol class="text-secondary">
+                    <li>Configure a local deployment below</li>
+                    <li>Copy the generated deploy command</li>
+                    <li>Run it from your laptop whenever you want to deploy</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Local Deployments List -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-list-ul me-2"></i>Local Deployments</span>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadLocalDeployments()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Deploy Path</th>
+                                <th>Screen Name</th>
+                                <th>Main File</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="localDeploymentsTable">
+                            <tr>
+                                <td colspan="5" class="text-center py-4 text-secondary">
+                                    <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                                    No local deployments configured. Click "Add Local Deploy" to get started.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 </div>
 
-<!-- Add Deployment Modal -->
+<!-- Add GitHub Deployment Modal -->
 <div class="modal fade" id="addDeploymentModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content bg-dark">
@@ -271,6 +348,131 @@
             </div>
             <div class="modal-body">
                 <pre id="deployLogContent" class="bg-black text-light p-3 rounded" style="max-height: 400px; overflow-y: auto;"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Local Deploy Modal -->
+<div class="modal fade" id="addLocalDeployModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-laptop me-2"></i>Add Local Deployment</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="addLocalDeployForm">
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>Local Deploy</strong> lets you push files directly from your laptop to the VPS.
+                        Perfect for projects with secrets or API keys you don't want on GitHub.
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Deployment Name</label>
+                            <input type="text" class="form-control bg-dark text-light" name="name" 
+                                   placeholder="my-bot" required>
+                            <small class="text-secondary">A friendly name for this deployment</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Screen Name</label>
+                            <input type="text" class="form-control bg-dark text-light" name="screen_name" 
+                                   placeholder="mybot" required>
+                            <small class="text-secondary">Name for the screen session</small>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Deploy Path on VPS</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control bg-dark text-light" name="deploy_path" 
+                                       id="localDeployPathInput" placeholder="/home/ubuntu/myproject" required>
+                                <button type="button" class="btn btn-outline-primary" onclick="openPathBrowser('localDeployPathInput')">
+                                    <i class="bi bi-folder"></i>
+                                </button>
+                            </div>
+                            <small class="text-secondary">Where to put files on the VPS</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Main File to Run</label>
+                            <input type="text" class="form-control bg-dark text-light" name="main_file" 
+                                   value="main.py" placeholder="main.py" required>
+                            <small class="text-secondary">The Python/Node file to execute</small>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Interpreter</label>
+                            <select class="form-select bg-dark text-light" name="interpreter">
+                                <option value="python3">Python 3</option>
+                                <option value="python">Python</option>
+                                <option value="node">Node.js</option>
+                                <option value="bash">Bash Script</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Virtual Environment Path (optional)</label>
+                            <input type="text" class="form-control bg-dark text-light" name="venv_path" 
+                                   placeholder="/home/ubuntu/myproject/venv">
+                            <small class="text-secondary">Leave empty if not using venv</small>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Extra Arguments (optional)</label>
+                        <input type="text" class="form-control bg-dark text-light" name="extra_args" 
+                               placeholder="--port 8080 --debug">
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-lg me-1"></i> Create Local Deployment
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Local Deploy Command Modal -->
+<div class="modal fade" id="localDeployCommandModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-terminal me-2"></i>Deploy Command</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-secondary">Run this command from your project folder on your laptop to deploy:</p>
+                
+                <div class="mb-3">
+                    <label class="form-label">One-liner command:</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control bg-black text-success font-monospace" id="deployCommandOneliner" readonly>
+                        <button class="btn btn-outline-primary" onclick="copyDeployCommand()">
+                            <i class="bi bi-clipboard"></i> Copy
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Or save this script as <code>deploy.sh</code>:</label>
+                    <pre id="deployCommandScript" class="bg-black text-light p-3 rounded" style="max-height: 300px; overflow-y: auto; font-size: 0.85rem;"></pre>
+                    <button class="btn btn-sm btn-outline-primary" onclick="copyDeployScript()">
+                        <i class="bi bi-clipboard me-1"></i> Copy Script
+                    </button>
+                </div>
+
+                <div class="alert alert-warning mt-3">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>First time?</strong> Make sure you can SSH to your VPS without a password prompt 
+                    (use SSH keys). Run: <code>ssh-copy-id {{ vps_user }}@{{ vps_host }}</code>
+                </div>
             </div>
         </div>
     </div>
@@ -692,8 +894,190 @@ function selectCurrentPath() {
     }
 }
 
+// =============================================
+// LOCAL DEPLOYMENTS
+// =============================================
+
+function loadLocalDeployments() {
+    fetch('/api/local-deployments')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('localDeploymentsTable');
+            if (data.deployments && data.deployments.length > 0) {
+                tbody.innerHTML = data.deployments.map(d => `
+                    <tr>
+                        <td><strong>${d.name}</strong></td>
+                        <td><code>${d.deploy_path}</code></td>
+                        <td><code>${d.screen_name}</code></td>
+                        <td><code>${d.main_file}</code></td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-success" onclick="showLocalDeployCommand('${d.id}')" title="Get Deploy Command">
+                                    <i class="bi bi-terminal"></i>
+                                </button>
+                                <button class="btn btn-outline-info" onclick="triggerLocalDeploy('${d.id}')" title="Restart Screen">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="deleteLocalDeployment('${d.id}')" title="Delete">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `).join('');
+            } else {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="5" class="text-center py-4 text-secondary">
+                            <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                            No local deployments configured. Click "Add Local Deploy" to get started.
+                        </td>
+                    </tr>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading local deployments:', error);
+        });
+}
+
+document.getElementById('addLocalDeployForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    const data = {};
+    formData.forEach((value, key) => data[key] = value);
+    
+    fetch('/api/local-deployments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast('Local deployment created!', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('addLocalDeployModal')).hide();
+            this.reset();
+            loadLocalDeployments();
+            // Show the command modal
+            showLocalDeployCommand(result.deployment.id);
+        } else {
+            showToast(result.error || 'Failed to create deployment', 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error creating deployment', 'danger');
+    });
+});
+
+function showLocalDeployCommand(id) {
+    fetch(`/api/local-deployments/${id}`)
+        .then(response => response.json())
+        .then(result => {
+            if (result.deployment) {
+                const d = result.deployment;
+                const vpsUser = '{{ vps_user }}';
+                const vpsHost = '{{ vps_host }}';
+                
+                // Generate one-liner
+                const oneliner = `rsync -avz --delete --exclude='.git' --exclude='venv' --exclude='__pycache__' ./ ${vpsUser}@${vpsHost}:${d.deploy_path}/ && ssh ${vpsUser}@${vpsHost} 'screen -X -S "${d.screen_name}" quit; cd "${d.deploy_path}" && screen -dmS "${d.screen_name}" ${d.venv_path ? `bash -c "source ${d.venv_path}/bin/activate && ${d.interpreter} ${d.main_file} ${d.extra_args || ''}"` : `${d.interpreter} ${d.main_file} ${d.extra_args || ''}`}'`;
+                
+                document.getElementById('deployCommandOneliner').value = oneliner;
+                
+                // Generate full script
+                const script = `#!/bin/bash
+# Deploy script for: ${d.name}
+# Run from your project folder: ./deploy.sh
+
+VPS_USER="${vpsUser}"
+VPS_HOST="${vpsHost}"
+REMOTE_PATH="${d.deploy_path}"
+SCREEN_NAME="${d.screen_name}"
+MAIN_FILE="${d.main_file}"
+INTERPRETER="${d.interpreter}"
+VENV_PATH="${d.venv_path || ''}"
+EXTRA_ARGS="${d.extra_args || ''}"
+
+echo "🚀 Deploying to $VPS_HOST..."
+
+# Sync files
+rsync -avz --delete \\
+    --exclude='.git' \\
+    --exclude='venv' \\
+    --exclude='.venv' \\
+    --exclude='__pycache__' \\
+    --exclude='*.pyc' \\
+    --exclude='.DS_Store' \\
+    --exclude='node_modules' \\
+    ./ "$VPS_USER@$VPS_HOST:$REMOTE_PATH/"
+
+# Stop old screen and start new one
+ssh "$VPS_USER@$VPS_HOST" << 'ENDSSH'
+screen -X -S "${d.screen_name}" quit 2>/dev/null
+cd "${d.deploy_path}"
+${d.venv_path ? `source "${d.venv_path}/bin/activate" && ` : ''}screen -dmS "${d.screen_name}" ${d.interpreter} ${d.main_file} ${d.extra_args || ''}
+sleep 1
+screen -ls | grep "${d.screen_name}" && echo "✅ Screen started!" || echo "❌ Screen failed to start"
+ENDSSH
+
+echo "✅ Deployment complete!"`;
+
+                document.getElementById('deployCommandScript').textContent = script;
+                new bootstrap.Modal(document.getElementById('localDeployCommandModal')).show();
+            }
+        });
+}
+
+function copyDeployCommand() {
+    const input = document.getElementById('deployCommandOneliner');
+    input.select();
+    document.execCommand('copy');
+    showToast('Command copied!', 'success');
+}
+
+function copyDeployScript() {
+    const text = document.getElementById('deployCommandScript').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('Script copied!', 'success');
+    });
+}
+
+function triggerLocalDeploy(id) {
+    if (!confirm('Restart the screen session? (Note: Files must be synced from your laptop first)')) return;
+    
+    fetch(`/api/local-deployments/${id}/restart`, { method: 'POST' })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Screen restarted!', 'success');
+            } else {
+                showToast(result.error || 'Restart failed', 'danger');
+            }
+        });
+}
+
+function deleteLocalDeployment(id) {
+    if (!confirm('Delete this local deployment configuration?')) return;
+    
+    fetch(`/api/local-deployments/${id}`, { method: 'DELETE' })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Deployment deleted', 'success');
+                loadLocalDeployments();
+            } else {
+                showToast(result.error || 'Delete failed', 'danger');
+            }
+        });
+}
+
 // Load on page load
-document.addEventListener('DOMContentLoaded', loadDeployments);
+document.addEventListener('DOMContentLoaded', function() {
+    loadDeployments();
+    loadLocalDeployments();
+});
 </script>
 
 <!-- Path Browser Modal -->

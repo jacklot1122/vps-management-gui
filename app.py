@@ -18,6 +18,7 @@ import uuid
 import hashlib
 import hmac
 import re
+import time
 from datetime import datetime
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
@@ -1010,14 +1011,18 @@ def deployments():
     # Build the webhook URL - force https for production
     webhook_url = request.host_url.rstrip('/') + '/webhook/github'
     webhook_url = webhook_url.replace('http://', 'https://')
-    return render_template('deployments.html', webhook_url=webhook_url)
+    return render_template('deployments.html', 
+                           webhook_url=webhook_url,
+                           vps_user=VPS_USER,
+                           vps_host=VPS_HOST)
 
 @app.route('/api/deployments', methods=['GET'])
 @login_required
 def get_deployments():
-    """Get all deployment configurations"""
-    deployments = load_deployments()
-    return jsonify({'success': True, 'deployments': list(deployments.values())})
+    """Get all deployment configurations (GitHub type only)"""
+    all_deployments = load_deployments()
+    github_deployments = [d for d in all_deployments.values() if d.get('type') != 'local']
+    return jsonify({'success': True, 'deployments': github_deployments})
 
 @app.route('/api/deployments', methods=['POST'])
 @login_required
@@ -1372,6 +1377,255 @@ def local_trigger():
     # Execute deployment (reuse existing flow)
     logger.info(f'Local trigger received for deployment: {deployment_id}')
     return execute_deployment(deployment_id)
+
+
+# =============================================================================
+# Local Deployments API (for direct laptop-to-VPS deployments)
+# =============================================================================
+
+def load_local_deployments():
+    """Load local deployments from deployments file (type='local')."""
+    all_deps = load_deployments()
+    return {k: v for k, v in all_deps.items() if v.get('type') == 'local'}
+
+
+def save_local_deployment(dep_id, data):
+    """Save a local deployment."""
+    all_deps = load_deployments()
+    data['type'] = 'local'
+    all_deps[dep_id] = data
+    save_deployments(all_deps)
+
+
+def delete_local_deployment_data(dep_id):
+    """Delete a local deployment."""
+    all_deps = load_deployments()
+    if dep_id in all_deps:
+        del all_deps[dep_id]
+        save_deployments(all_deps)
+        return True
+    return False
+
+
+@app.route('/api/local-deployments', methods=['GET'])
+@login_required
+def get_local_deployments():
+    """Get all local deployments."""
+    try:
+        deps = load_local_deployments()
+        return jsonify(deps)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/local-deployments', methods=['POST'])
+@login_required
+def create_local_deployment():
+    """Create a new local deployment."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Generate unique ID
+        dep_id = f"local_{int(time.time())}_{os.urandom(4).hex()}"
+        
+        # Required fields
+        name = data.get('name', '').strip()
+        if not name:
+            return jsonify({'error': 'Name is required'}), 400
+        
+        deployment = {
+            'type': 'local',
+            'name': name,
+            'screen_name': data.get('screen_name', '').strip() or name.lower().replace(' ', '_'),
+            'deploy_path': data.get('deploy_path', '').strip() or f'/home/{VPS_USER}/apps/{name.lower().replace(" ", "_")}',
+            'main_file': data.get('main_file', '').strip() or 'app.py',
+            'interpreter': data.get('interpreter', 'python3'),
+            'venv_path': data.get('venv_path', '').strip(),
+            'extra_args': data.get('extra_args', '').strip(),
+            'enabled': True,
+            'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        
+        save_local_deployment(dep_id, deployment)
+        return jsonify({'success': True, 'id': dep_id, 'deployment': deployment})
+    except Exception as e:
+        logger.error(f"Error creating local deployment: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/local-deployments/<dep_id>', methods=['GET'])
+@login_required
+def get_local_deployment(dep_id):
+    """Get a single local deployment."""
+    try:
+        deps = load_local_deployments()
+        if dep_id not in deps:
+            return jsonify({'error': 'Deployment not found'}), 404
+        return jsonify(deps[dep_id])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/local-deployments/<dep_id>', methods=['DELETE'])
+@login_required
+def delete_local_deployment_route(dep_id):
+    """Delete a local deployment."""
+    try:
+        if delete_local_deployment_data(dep_id):
+            return jsonify({'success': True})
+        else:
+            return jsonify({'error': 'Deployment not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/local-deployments/<dep_id>/restart', methods=['POST'])
+@login_required
+def restart_local_deployment(dep_id):
+    """Restart the screen session for a local deployment."""
+    try:
+        deps = load_local_deployments()
+        if dep_id not in deps:
+            return jsonify({'error': 'Deployment not found'}), 404
+        
+        dep = deps[dep_id]
+        screen_name = dep.get('screen_name', '')
+        deploy_path = dep.get('deploy_path', '')
+        main_file = dep.get('main_file', 'app.py')
+        interpreter = dep.get('interpreter', 'python3')
+        venv_path = dep.get('venv_path', '')
+        extra_args = dep.get('extra_args', '')
+        
+        if not screen_name or not deploy_path:
+            return jsonify({'error': 'Invalid deployment configuration'}), 400
+        
+        # Build the run command
+        if venv_path:
+            run_cmd = f"source {venv_path}/bin/activate && {interpreter} {main_file}"
+        else:
+            run_cmd = f"{interpreter} {main_file}"
+        
+        if extra_args:
+            run_cmd += f" {extra_args}"
+        
+        # Kill existing screen and restart using ssh_manager
+        if not ssh_manager.connected:
+            return jsonify({'error': 'SSH connection failed'}), 500
+        
+        # Kill existing screen
+        kill_cmd = f"screen -S {screen_name} -X quit 2>/dev/null || true"
+        ssh_manager.execute(kill_cmd)
+        time.sleep(0.5)
+        
+        # Start new screen
+        start_cmd = f"cd {deploy_path} && screen -dmS {screen_name} bash -c '{run_cmd}'"
+        result = ssh_manager.execute(start_cmd)
+        
+        if result is not None:
+            return jsonify({'success': True, 'message': f'Screen {screen_name} restarted'})
+        else:
+            return jsonify({'error': 'Failed to restart screen'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error restarting local deployment: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/local-deployments/<dep_id>/command', methods=['GET'])
+@login_required
+def get_local_deploy_command(dep_id):
+    """Get the deploy command/script for a local deployment."""
+    try:
+        deps = load_local_deployments()
+        if dep_id not in deps:
+            return jsonify({'error': 'Deployment not found'}), 404
+        
+        dep = deps[dep_id]
+        screen_name = dep.get('screen_name', '')
+        deploy_path = dep.get('deploy_path', '')
+        main_file = dep.get('main_file', 'app.py')
+        interpreter = dep.get('interpreter', 'python3')
+        venv_path = dep.get('venv_path', '')
+        extra_args = dep.get('extra_args', '')
+        
+        # Build run command
+        if venv_path:
+            run_cmd = f"source {venv_path}/bin/activate && {interpreter} {main_file}"
+        else:
+            run_cmd = f"{interpreter} {main_file}"
+        
+        if extra_args:
+            run_cmd += f" {extra_args}"
+        
+        # One-liner rsync command
+        one_liner = f"rsync -avz --delete -e 'ssh' ./ {VPS_USER}@{VPS_HOST}:{deploy_path}/ && ssh {VPS_USER}@{VPS_HOST} \"screen -S {screen_name} -X quit 2>/dev/null; cd {deploy_path} && screen -dmS {screen_name} bash -c '{run_cmd}'\""
+        
+        # Full bash script
+        script = f'''#!/bin/bash
+# Local Deploy Script for: {dep.get('name', 'Unknown')}
+# Run this from your local project directory
+
+VPS_USER="{VPS_USER}"
+VPS_HOST="{VPS_HOST}"
+REMOTE_PATH="{deploy_path}"
+SCREEN_NAME="{screen_name}"
+MAIN_FILE="{main_file}"
+INTERPRETER="{interpreter}"
+VENV_PATH="{venv_path}"
+EXTRA_ARGS="{extra_args}"
+
+echo "=== Syncing files to VPS ==="
+rsync -avz --delete \\
+    --exclude '.git' \\
+    --exclude '__pycache__' \\
+    --exclude '*.pyc' \\
+    --exclude '.env' \\
+    --exclude 'venv' \\
+    --exclude '.venv' \\
+    --exclude 'node_modules' \\
+    -e 'ssh' \\
+    ./ "$VPS_USER@$VPS_HOST:$REMOTE_PATH/"
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: rsync failed!"
+    exit 1
+fi
+
+echo "=== Restarting application ==="
+ssh "$VPS_USER@$VPS_HOST" << 'ENDSSH'
+cd {deploy_path}
+screen -S {screen_name} -X quit 2>/dev/null || true
+sleep 1
+'''
+        
+        if venv_path:
+            script += f'screen -dmS {screen_name} bash -c "source {venv_path}/bin/activate && {interpreter} {main_file}'
+        else:
+            script += f'screen -dmS {screen_name} bash -c "{interpreter} {main_file}'
+        
+        if extra_args:
+            script += f' {extra_args}'
+        
+        script += '''"
+ENDSSH
+
+echo "=== Deployment complete! ==="
+echo "Screen session: {screen_name}"
+'''
+        
+        return jsonify({
+            'success': True,
+            'one_liner': one_liner,
+            'script': script,
+            'deployment': dep
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting deploy command: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 # =============================================================================
 # Main Entry Point
