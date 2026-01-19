@@ -416,8 +416,13 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Virtual Environment Path (optional)</label>
-                            <input type="text" class="form-control bg-dark text-light" name="venv_path" 
-                                   placeholder="/home/ubuntu/myproject/venv">
+                            <div class="input-group">
+                                <input type="text" class="form-control bg-dark text-light" name="venv_path" 
+                                       id="localVenvPathInput" placeholder="/home/ubuntu/myproject/venv">
+                                <button type="button" class="btn btn-outline-primary" onclick="openPathBrowser('localVenvPathInput')">
+                                    <i class="bi bi-folder"></i>
+                                </button>
+                            </div>
                             <small class="text-secondary">Leave empty if not using venv</small>
                         </div>
                     </div>
@@ -961,7 +966,7 @@ document.getElementById('addLocalDeployForm').addEventListener('submit', functio
             this.reset();
             loadLocalDeployments();
             // Show the command modal
-            showLocalDeployCommand(result.deployment.id);
+            showLocalDeployCommand(result.id);
         } else {
             showToast(result.error || 'Failed to create deployment', 'danger');
         }
@@ -975,19 +980,21 @@ document.getElementById('addLocalDeployForm').addEventListener('submit', functio
 function showLocalDeployCommand(id) {
     fetch(`/api/local-deployments/${id}`)
         .then(response => response.json())
-        .then(result => {
-            if (result.deployment) {
-                const d = result.deployment;
-                const vpsUser = '{{ vps_user }}';
-                const vpsHost = '{{ vps_host }}';
-                
-                // Generate one-liner
-                const oneliner = `rsync -avz --delete --exclude='.git' --exclude='venv' --exclude='__pycache__' ./ ${vpsUser}@${vpsHost}:${d.deploy_path}/ && ssh ${vpsUser}@${vpsHost} 'screen -X -S "${d.screen_name}" quit; cd "${d.deploy_path}" && screen -dmS "${d.screen_name}" ${d.venv_path ? `bash -c "source ${d.venv_path}/bin/activate && ${d.interpreter} ${d.main_file} ${d.extra_args || ''}"` : `${d.interpreter} ${d.main_file} ${d.extra_args || ''}`}'`;
-                
-                document.getElementById('deployCommandOneliner').value = oneliner;
-                
-                // Generate full script
-                const script = `#!/bin/bash
+        .then(d => {
+            if (d.error) {
+                showToast(d.error, 'danger');
+                return;
+            }
+            const vpsUser = '{{ vps_user }}';
+            const vpsHost = '{{ vps_host }}';
+            
+            // Generate one-liner
+            const oneliner = `rsync -avz --delete --exclude='.git' --exclude='venv' --exclude='__pycache__' ./ ${vpsUser}@${vpsHost}:${d.deploy_path}/ && ssh ${vpsUser}@${vpsHost} 'screen -X -S "${d.screen_name}" quit; cd "${d.deploy_path}" && screen -dmS "${d.screen_name}" ${d.venv_path ? `bash -c "source ${d.venv_path}/bin/activate && ${d.interpreter} ${d.main_file} ${d.extra_args || ''}"` : `${d.interpreter} ${d.main_file} ${d.extra_args || ''}`}'`;
+            
+            document.getElementById('deployCommandOneliner').value = oneliner;
+            
+            // Generate full script
+            const script = `#!/bin/bash
 # Deploy script for: ${d.name}
 # Run from your project folder: ./deploy.sh
 
@@ -1024,9 +1031,8 @@ ENDSSH
 
 echo "✅ Deployment complete!"`;
 
-                document.getElementById('deployCommandScript').textContent = script;
-                new bootstrap.Modal(document.getElementById('localDeployCommandModal')).show();
-            }
+            document.getElementById('deployCommandScript').textContent = script;
+            new bootstrap.Modal(document.getElementById('localDeployCommandModal')).show();
         });
 }
 
